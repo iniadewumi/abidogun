@@ -11,7 +11,12 @@ plugins:
 custom:
   client:
     bucketName: ${self:service}-${self:provider.stage}
-    distributionFolder: dist  # Ensure your static files are in this folder
+    distributionFolder: dist
+    uploadOptions:
+      CacheControl: max-age=0, no-cache, no-store, must-revalidate
+      Include:
+        - "*.pdf"
+
 
 resources:
   Resources:

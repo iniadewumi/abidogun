@@ -16,8 +16,7 @@ yarn-error.log
 *.swp
 *.swo
 
-# Distribution folder for static files
-dist/
+
 
 # MacOS files
 .DS_Store
