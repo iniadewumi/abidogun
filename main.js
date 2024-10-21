@@ -1,12 +1,10 @@
-import { pdfjsLib } from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
-
 document.addEventListener("DOMContentLoaded", function() {
     const url = 'book.pdf';
     const pdfViewer = document.getElementById('pdf-viewer');
     const canvas = document.getElementById('pdf-canvas');
     const ctx = canvas.getContext('2d');
 
-    // Set the worker source from the CDN
+    // Set the worker source to the PDF.js worker from the CDN
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
     // Load PDF
@@ -24,5 +22,7 @@ document.addEventListener("DOMContentLoaded", function() {
             };
             page.render(renderContext);
         });
+    }).catch(error => {
+        console.error('Error loading PDF:', error);
     });
 });
