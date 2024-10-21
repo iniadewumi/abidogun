@@ -1,0 +1,43 @@
+service: abidogun
+
+provider:
+  name: aws
+  region: us-east-1 # or your preferred region
+  stage: ${opt:stage, 'dev'}
+
+plugins:
+  - serverless-finch
+
+custom:
+  client:
+    bucketName: ${self:service}-${self:provider.stage}
+    distributionFolder: dist  # Ensure your static files are in this folder
+
+resources:
+  Resources:
+    StaticSite:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.client.bucketName}
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSite
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource: arn:aws:s3:::${self:custom.client.bucketName}/*
+
+outputs:
+  WebsiteURL:
+    Value: http://${self:custom.client.bucketName}.s3-website-${self:provider.region}.amazonaws.com
+    Description: URL for website hosted on S3
