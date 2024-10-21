@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Abidogun PDF Viewer</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="pdf-viewer">
+        <div id="pdf-container"></div>
+        <div id="controls">
+            <button id="prev-page" aria-label="Previous page"><i class="fas fa-chevron-left"></i></button>
+            <div id="page-info">
+                <input type="number" id="current-page" min="1">
+                <span>of&emsp;</span>
+                <span id="total-pages"></span>
+            </div>
+            <button id="next-page" aria-label="Next page"><i class="fas fa-chevron-right"></i></button>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
