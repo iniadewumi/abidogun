@@ -1,3 +1,5 @@
+import { pdfjsLib } from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
+
 document.addEventListener("DOMContentLoaded", function() {
     const url = 'book.pdf';
     const pdfViewer = document.getElementById('pdf-viewer');
