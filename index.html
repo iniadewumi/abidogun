@@ -3,15 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Book Reader</title>
+    <title>PDF Viewer</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="pdf-viewer">
-        <canvas id="pdf-canvas"></canvas>
+        <div id="pdf-container"></div>
+        <div id="controls">
+            <button id="prev-page" aria-label="Previous page">&#9664;</button>
+            <span id="page-info">
+                <input type="number" id="current-page" min="1"> / <span id="total-pages"></span>
+            </span>
+            <button id="next-page" aria-label="Next page">&#9654;</button>
+        </div>
     </div>
-
-    <!-- Include PDF.js from CDN -->
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="main.js"></script>
 </body>
