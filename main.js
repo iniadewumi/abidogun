@@ -1,17 +1,20 @@
 document.addEventListener("DOMContentLoaded", function() {
-    const url = 'book.pdf';
+    const url = 'book.pdf'; // Make sure this points to the correct PDF file
     const pdfContainer = document.getElementById('pdf-container');
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
     const currentPageInput = document.getElementById('current-page');
     const totalPagesElement = document.getElementById('total-pages');
 
+    if (!pdfContainer || !prevPageBtn || !nextPageBtn || !currentPageInput || !totalPagesElement) {
+        console.error('One or more required elements are missing from the DOM');
+        return;
+    }
+
     let pdfDoc = null;
     let currentPage = 1;
     let totalPages = 0;
     let pdfLoaded = false;
-    let pageRendering = false;
-    let pageNumPending = null;
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
@@ -29,6 +32,7 @@ document.addEventListener("DOMContentLoaded", function() {
             renderPages();
         }).catch(error => {
             console.error('Error loading PDF:', error);
+            pdfContainer.textContent = 'Error loading PDF. Please check the console for details.';
         });
     }
 
@@ -67,6 +71,8 @@ document.addEventListener("DOMContentLoaded", function() {
             if (num === currentPage) {
                 scrollToPage(currentPage);
             }
+        }).catch(error => {
+            console.error(`Error rendering page ${num}:`, error);
         });
     }
 
@@ -104,7 +110,8 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     pdfContainer.addEventListener('scroll', () => {
-        const pageHeight = pdfContainer.firstElementChild.offsetHeight;
+        const pageHeight = pdfContainer.firstElementChild?.offsetHeight;
+        if (!pageHeight) return;
         const scrollPosition = pdfContainer.scrollTop;
         const currentPageNumber = Math.floor(scrollPosition / pageHeight) + 1;
         if (currentPageNumber !== currentPage) {
@@ -132,8 +139,10 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     window.addEventListener('resize', () => {
-        renderPages();
-        scrollToPage(currentPage);
+        if (pdfLoaded) {
+            renderPages();
+            scrollToPage(currentPage);
+        }
     });
 
     loadPDF();
