@@ -9,7 +9,7 @@ window.addEventListener('resize', setVH);
 window.addEventListener('orientationchange', setVH);
 
 document.addEventListener("DOMContentLoaded", function() {
-    const url = 'Abidogun.pdf';
+    const url = 'Abidogun.pdf'; // Path to your PDF file
     const pdfContainer = document.getElementById('pdf-container');
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
@@ -22,8 +22,41 @@ document.addEventListener("DOMContentLoaded", function() {
     let pageRendering = false;
     let pageNumPending = null;
     let scale = 1;
+    let currentPageText = ''; // Variable to store text of the current page
+
+    // Audio control variables
+    let isSpeaking = false;
+    let isPaused = false;
+    let speechIndex = 0; // Index to track where we are in the text chunks
+    let textChunks = []; // Array to hold text chunks
+    const playButton = document.getElementById('play-audio');
+    const pauseButton = document.getElementById('pause-audio');
+    const stopButton = document.getElementById('stop-audio');
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    if (playButton) {
+        playButton.addEventListener('click', () => {
+            playAudio(currentPageText);
+        });
+    } else {
+        console.error("Play button not found in the DOM");
+    }
+
+    if (pauseButton) {
+        pauseButton.addEventListener('click', pauseAudio);
+    } else {
+        console.error("Pause button not found in the DOM");
+    }
+
+    if (stopButton) {
+        stopButton.addEventListener('click', stopAudio);
+    } else {
+        console.error("Stop button not found in the DOM");
+    }
+
+    // Initial update of audio controls
+    updateAudioControls();
 
     function loadPDF() {
         pdfjsLib.getDocument(url).promise.then(pdf => {
@@ -74,6 +107,12 @@ document.addEventListener("DOMContentLoaded", function() {
             pdfContainer.innerHTML = '';
             pdfContainer.appendChild(canvas);
 
+            // Extract text content from the page
+            page.getTextContent().then(textContent => {
+                const texts = textContent.items.map(item => item.str);
+                currentPageText = texts.join(' ');
+            });
+
             currentPage = num;
             currentPageInput.value = num;
             localStorage.setItem('currentPage', num);
@@ -93,12 +132,82 @@ document.addEventListener("DOMContentLoaded", function() {
         const newPage = currentPage + offset;
         if (newPage >= 1 && newPage <= totalPages) {
             queueRenderPage(newPage);
+            stopAudio();
         }
     }
 
     function updateUI() {
         prevPageBtn.disabled = currentPage <= 1;
         nextPageBtn.disabled = currentPage >= totalPages;
+    }
+
+    // Play audio
+    function playAudio(text) {
+        if (!isSpeaking) {
+            // Split the text into sentences
+            textChunks = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
+            speechIndex = speechIndex || 0; // Ensure speechIndex is set
+            speakChunk(speechIndex);
+        } else if (isPaused) {
+            // Resume speaking from the current index
+            isPaused = false;
+            speakChunk(speechIndex);
+        }
+    }
+
+    function speakChunk(index) {
+        if (index < textChunks.length) {
+            isSpeaking = true;
+            responsiveVoice.speak(textChunks[index], "Tamil Female", {
+                onstart: function() {
+                    updateAudioControls();
+                },
+                onend: function() {
+                    if (!isPaused && isSpeaking) {
+                        speechIndex++;
+                        speakChunk(speechIndex);
+                    }
+                },
+                onerror: function() {
+                    isSpeaking = false;
+                    isPaused = false;
+                    updateAudioControls();
+                }
+            });
+        } else {
+            // Finished speaking all chunks
+            isSpeaking = false;
+            isPaused = false;
+            speechIndex = 0;
+            updateAudioControls();
+        }
+    }
+
+    // Pause audio
+    function pauseAudio() {
+        if (isSpeaking && !isPaused) {
+            responsiveVoice.cancel();
+            isPaused = true;
+            updateAudioControls();
+        }
+    }
+
+    // Stop audio
+    function stopAudio() {
+        if (isSpeaking || isPaused) {
+            responsiveVoice.cancel();
+            isSpeaking = false;
+            isPaused = false;
+            speechIndex = 0; // Reset the index
+            updateAudioControls();
+        }
+    }
+
+    // Update audio control buttons
+    function updateAudioControls() {
+        if (playButton) playButton.disabled = isSpeaking && !isPaused;
+        if (pauseButton) pauseButton.disabled = !isSpeaking || isPaused;
+        if (stopButton) stopButton.disabled = !isSpeaking && !isPaused;
     }
 
     prevPageBtn.addEventListener('click', () => changePage(-1));
@@ -108,6 +217,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const pageNum = parseInt(currentPageInput.value);
         if (pageNum >= 1 && pageNum <= totalPages && pageNum !== currentPage) {
             queueRenderPage(pageNum);
+            stopAudio();
         }
     });
 
@@ -149,32 +259,6 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
+    // Initialize PDF loading
     loadPDF();
-});
-
-let currentScale = 1;
-let startDist = 0;
-
-pdfContainer.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) {
-        startDist = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
-    }
-});
-
-pdfContainer.addEventListener('touchmove', e => {
-    e.preventDefault();
-    if (e.touches.length === 2) {
-        const dist = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
-        currentScale *= dist / startDist;
-        currentScale = Math.min(Math.max(1, currentScale), 3);  // Limit zoom between 1x and 3x
-        startDist = dist;
-        scale = currentScale;
-        renderPage(currentPage);
-    }
 });
