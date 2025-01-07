@@ -2,26 +2,50 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Abidogun by Ini Adewumi</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Abidogun PDF Viewer</title>
-    <link rel="stylesheet" href="style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-L34PZR9X5Z"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-L34PZR9X5Z');
+    </script>
 </head>
 <body>
     <div id="pdf-viewer">
         <div id="pdf-container"></div>
-        <div id="controls">
-            <button id="prev-page" aria-label="Previous page"><i class="fas fa-chevron-left"></i></button>
-            <div id="page-info">
-                <input type="number" id="current-page" min="1">
-                <span>of&emsp;</span>
-                <span id="total-pages"></span>
+
+        <!-- Controls Wrapper -->
+        <div id="controls-wrapper">
+            <!-- Audio Controls -->
+            <div id="audio-controls">
+                <button id="play-audio" aria-label="Play audio"><i class="fas fa-play"></i></button>
+                <button id="pause-audio" aria-label="Pause audio"><i class="fas fa-pause"></i></button>
+                <button id="stop-audio" aria-label="Stop audio"><i class="fas fa-stop"></i></button>
             </div>
-            <button id="next-page" aria-label="Next page"><i class="fas fa-chevron-right"></i></button>
+
+            <!-- Page Controls -->
+            <div id="page-controls">
+                <button id="prev-page" aria-label="Previous page"><i class="fas fa-chevron-left"></i></button>
+                <div id="page-info">
+                    <input type="number" id="current-page" min="1" aria-label="Current page">
+                    <span>&nbsp;of&nbsp;</span>
+                    <span id="total-pages"></span>
+                </div>
+                <button id="next-page" aria-label="Next page"><i class="fas fa-chevron-right"></i></button>
+            </div>
         </div>
     </div>
-    
+
+    <!-- Include PDF.js library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle.js"></script>
+    <script src="env.js"></script>
     <script src="main.js"></script>
 </body>
 </html>
