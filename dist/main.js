@@ -15,14 +15,75 @@ document.addEventListener("DOMContentLoaded", function() {
     const nextPageBtn = document.getElementById('next-page');
     const currentPageInput = document.getElementById('current-page');
     const totalPagesElement = document.getElementById('total-pages');
+    const playButton = document.getElementById('play-audio');
+    const pauseButton = document.getElementById('pause-audio');
+    const stopButton = document.getElementById('stop-audio');
 
+    // Generate a session ID if not exists
+    const sessionId = localStorage.getItem('sessionId') || 
+                     'session_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('sessionId', sessionId);
+
+    // PDF variables
     let pdfDoc = null;
     let currentPage = 1;
     let totalPages = 0;
     let pageRendering = false;
     let pageNumPending = null;
     let scale = 1;
+    let currentPageText = '';
+    let lastTrackingUpdate = 0;
+    const TRACKING_INTERVAL = 30000; // 30 seconds
 
+    // Audio variables
+    let audioElement = null;
+    let audioData = null;
+    let isInitialized = false;
+    let isSpeaking = false;
+    let isPaused = false;
+
+    // Initialize synthesizer function
+    function initializeSynthesizer() {
+        isInitialized = true;
+    }
+
+    // Analytics tracking function using Google Analytics
+    function trackReading(page, action = 'read') {
+        const now = Date.now();
+        if (now - lastTrackingUpdate < TRACKING_INTERVAL && action === 'read') {
+            return;
+        }
+        
+        lastTrackingUpdate = now;
+
+        // Send event to Google Analytics
+        if (typeof gtag !== 'undefined') {
+            gtag('event', action, {
+                'event_category': 'PDF Reading',
+                'event_label': url,
+                'value': page,
+                'session_id': sessionId,
+                'total_pages': totalPages,
+                'progress_percentage': Math.round((page / totalPages) * 100)
+            });
+        }
+    }
+
+    // Track reading time
+    let readingStartTime = Date.now();
+    function trackReadingTime() {
+        if (typeof gtag !== 'undefined') {
+            const timeSpent = Math.round((Date.now() - readingStartTime) / 1000);
+            gtag('event', 'reading_time', {
+                'event_category': 'PDF Reading',
+                'event_label': url,
+                'value': timeSpent,
+                'session_id': sessionId
+            });
+        }
+    }
+
+    // PDF.js initialization
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
     function loadPDF() {
@@ -31,9 +92,14 @@ document.addEventListener("DOMContentLoaded", function() {
             totalPages = pdf.numPages;
             totalPagesElement.textContent = totalPages;
 
+            // Get last read page
             currentPage = parseInt(localStorage.getItem('currentPage')) || 1;
             currentPage = Math.min(Math.max(currentPage, 1), totalPages);
             currentPageInput.value = currentPage;
+
+            // Track session start
+            trackReading(currentPage, 'start_reading');
+            readingStartTime = Date.now();
 
             renderPage(currentPage);
         }).catch(error => {
@@ -74,9 +140,20 @@ document.addEventListener("DOMContentLoaded", function() {
             pdfContainer.innerHTML = '';
             pdfContainer.appendChild(canvas);
 
+            page.getTextContent().then(textContent => {
+                const texts = textContent.items.map(item => item.str);
+                currentPageText = texts.join(' ');
+                audioData = null;
+                audioElement = null;
+            });
+
             currentPage = num;
             currentPageInput.value = num;
             localStorage.setItem('currentPage', num);
+            
+            // Track page change
+            trackReading(num, 'page_change');
+            
             updateUI();
         });
     }
@@ -89,9 +166,135 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    // Audio control functions
+    function playAudio(text) {
+        if (isSpeaking && !isPaused) {
+            return;
+        }
+        if (audioElement && isPaused) {
+            audioElement.play();
+            isSpeaking = true;
+            isPaused = false;
+            updateAudioControls();
+        } else if (audioElement) {
+            audioElement.play();
+            isSpeaking = true;
+            isPaused = false;
+            updateAudioControls();
+        } else {
+            synthesizeAudio(text);
+        }
+    }
+
+    function synthesizeAudio(text) {
+        if (!isInitialized) {
+            initializeSynthesizer();
+        }
+
+        playButton.disabled = true;
+        pauseButton.disabled = true;
+        stopButton.disabled = true;
+
+        const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
+            window.ENV.AZURE_SUBSCRIPTION_KEY,
+            window.ENV.AZURE_REGION
+        );
+        speechConfig.speechSynthesisVoiceName = 'en-NG-EzinneNeural';
+
+        const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, null);
+
+        synthesizer.speakTextAsync(
+            text,
+            result => {
+                if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) {
+                    const audioBuffer = result.audioData;
+                    const blob = new Blob([audioBuffer], { type: 'audio/wav' });
+                    const url = URL.createObjectURL(blob);
+
+                    audioElement = new Audio(url);
+
+                    audioElement.addEventListener('ended', () => {
+                        isSpeaking = false;
+                        isPaused = false;
+                        updateAudioControls();
+                        URL.revokeObjectURL(url);
+                    });
+
+                    audioElement.addEventListener('playing', () => {
+                        isSpeaking = true;
+                        isPaused = false;
+                        updateAudioControls();
+                    });
+
+                    audioElement.addEventListener('pause', () => {
+                        if (!audioElement.ended) {
+                            isSpeaking = false;
+                            isPaused = true;
+                            updateAudioControls();
+                        }
+                    });
+
+                    audioElement.addEventListener('error', (e) => {
+                        console.error('Audio playback error:', e);
+                        isSpeaking = false;
+                        isPaused = false;
+                        updateAudioControls();
+                    });
+
+                    audioElement.play();
+                    isSpeaking = true;
+                    isPaused = false;
+                    updateAudioControls();
+
+                    audioData = audioBuffer;
+                } else if (result.reason === SpeechSDK.ResultReason.Canceled) {
+                    const cancellation = SpeechSDK.CancellationDetails.fromResult(result);
+                    console.error('Speech synthesis canceled:', cancellation.errorDetails);
+                    isSpeaking = false;
+                    isPaused = false;
+                    updateAudioControls();
+                }
+                synthesizer.close();
+            },
+            error => {
+                console.error('Error synthesizing speech:', error);
+                isSpeaking = false;
+                isPaused = false;
+                updateAudioControls();
+                synthesizer.close();
+            }
+        );
+    }
+
+    function pauseAudio() {
+        if (audioElement && isSpeaking && !isPaused) {
+            audioElement.pause();
+            isSpeaking = false;
+            isPaused = true;
+            updateAudioControls();
+        }
+    }
+
+    function stopAudio() {
+        if (audioElement) {
+            audioElement.pause();
+            audioElement.currentTime = 0;
+            isSpeaking = false;
+            isPaused = false;
+            updateAudioControls();
+        }
+    }
+
+    function updateAudioControls() {
+        if (playButton) playButton.disabled = isSpeaking && !isPaused;
+        if (pauseButton) pauseButton.disabled = !isSpeaking || isPaused;
+        if (stopButton) stopButton.disabled = !isSpeaking && !isPaused && (!audioElement || audioElement.currentTime === 0);
+    }
+
     function changePage(offset) {
         const newPage = currentPage + offset;
         if (newPage >= 1 && newPage <= totalPages) {
+            stopAudio();
             queueRenderPage(newPage);
         }
     }
@@ -101,16 +304,40 @@ document.addEventListener("DOMContentLoaded", function() {
         nextPageBtn.disabled = currentPage >= totalPages;
     }
 
+    // Event listeners
+    if (playButton) {
+        playButton.addEventListener('click', () => {
+            console.log(currentPageText);
+            playAudio(currentPageText);
+        });
+    } else {
+        console.error("Play button not found in the DOM");
+    }
+
+    if (pauseButton) {
+        pauseButton.addEventListener('click', pauseAudio);
+    } else {
+        console.error("Pause button not found in the DOM");
+    }
+
+    if (stopButton) {
+        stopButton.addEventListener('click', stopAudio);
+    } else {
+        console.error("Stop button not found in the DOM");
+    }
+
     prevPageBtn.addEventListener('click', () => changePage(-1));
     nextPageBtn.addEventListener('click', () => changePage(1));
 
     currentPageInput.addEventListener('change', () => {
         const pageNum = parseInt(currentPageInput.value);
         if (pageNum >= 1 && pageNum <= totalPages && pageNum !== currentPage) {
+            stopAudio();
             queueRenderPage(pageNum);
         }
     });
 
+    // Touch events for mobile
     let touchStartX = 0;
     let touchStartY = 0;
 
@@ -149,32 +376,28 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
+    // Enhanced tracking events
+    window.addEventListener('beforeunload', () => {
+        trackReadingTime();
+        trackReading(currentPage, 'end_reading');
+        if (audioElement) {
+            audioElement.pause();
+            audioElement = null;
+        }
+    });
+
+    // Track visibility changes
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            trackReadingTime();
+            trackReading(currentPage, 'pause_reading');
+        } else {
+            readingStartTime = Date.now();
+            trackReading(currentPage, 'resume_reading');
+        }
+    });
+
+    // Initialize
     loadPDF();
-});
-
-let currentScale = 1;
-let startDist = 0;
-
-pdfContainer.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) {
-        startDist = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
-    }
-});
-
-pdfContainer.addEventListener('touchmove', e => {
-    e.preventDefault();
-    if (e.touches.length === 2) {
-        const dist = Math.hypot(
-            e.touches[0].pageX - e.touches[1].pageX,
-            e.touches[0].pageY - e.touches[1].pageY
-        );
-        currentScale *= dist / startDist;
-        currentScale = Math.min(Math.max(1, currentScale), 3);  // Limit zoom between 1x and 3x
-        startDist = dist;
-        scale = currentScale;
-        renderPage(currentPage);
-    }
+    updateAudioControls();
 });
