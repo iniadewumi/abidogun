@@ -1,3 +1,37 @@
+// Generate a unique device fingerprint
+function generateDeviceFingerprint() {
+    const components = [
+        navigator.userAgent,
+        navigator.language,
+        new Date().getTimezoneOffset(),
+        screen.colorDepth,
+        screen.width + 'x' + screen.height,
+        navigator.hardwareConcurrency,
+        navigator.deviceMemory,
+        !!navigator.bluetooth,
+        !!navigator.credentials,
+        !!navigator.geolocation,
+        !!navigator.mediaDevices,
+        !!navigator.serviceWorker
+    ];
+
+    // Create a string from components and hash it
+    const fingerprint = components.join('###');
+    let hash = 0;
+    
+    for (let i = 0; i < fingerprint.length; i++) {
+        const char = fingerprint.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+    }
+    
+    // Convert to positive hex string and store it
+    const deviceId = Math.abs(hash).toString(16);
+    localStorage.setItem('deviceId', deviceId);
+    
+    return deviceId;
+}
+
 // Mobile viewport height fix
 function setVH() {
     let vh = window.innerHeight * 0.01;
@@ -8,8 +42,215 @@ setVH();
 window.addEventListener('resize', setVH);
 window.addEventListener('orientationchange', setVH);
 
+// Enhanced analytics tracking with additional metrics
+function trackReading(page, action = 'read') {
+    const now = Date.now();
+    if (now - lastTrackingUpdate < TRACKING_INTERVAL && action === 'read') {
+        return;
+    }
+    
+    lastTrackingUpdate = now;
+    const deviceId = localStorage.getItem('deviceId') || generateDeviceFingerprint();
+
+    // Calculate reading velocity (pages per hour)
+    const readingStartStr = localStorage.getItem('readingStart');
+    const readingStart = readingStartStr ? new Date(readingStartStr) : new Date();
+    if (!readingStartStr) {
+        localStorage.setItem('readingStart', readingStart.toISOString());
+    }
+    const hoursSpent = (now - readingStart.getTime()) / (1000 * 60 * 60);
+    const pagesPerHour = hoursSpent > 0 ? (page / hoursSpent).toFixed(2) : 0;
+
+    // Get reading history
+    const readingHistory = JSON.parse(localStorage.getItem('readingHistory') || '[]');
+    readingHistory.push({
+        timestamp: now,
+        page: page,
+        action: action
+    });
+    localStorage.setItem('readingHistory', JSON.stringify(readingHistory.slice(-100)));
+
+    // Calculate reading patterns
+    const readingPatterns = analyzeReadingPatterns(readingHistory);
+
+    if (typeof gtag !== 'undefined') {
+        gtag('event', action, {
+            'event_category': 'PDF Reading',
+            'event_label': url,
+            // Basic metrics
+            'value': page,
+            'session_id': sessionId,
+            'device_id': deviceId,
+            'total_pages': totalPages,
+            'progress_percentage': Math.round((page / totalPages) * 100),
+            
+            // Enhanced metrics
+            'reading_velocity': parseFloat(pagesPerHour),
+            'time_on_current_page': calculateTimeOnPage(readingHistory),
+            'reading_session_count': parseInt(localStorage.getItem('readingSessionCount') || '1'),
+            'reading_completion': calculateReadingCompletion(),
+            'pages_read_in_session': calculatePagesInSession(readingHistory),
+            
+            // Reading patterns
+            'reading_pattern': readingPatterns.pattern,
+            'back_tracking_count': readingPatterns.backTrackCount,
+            'sequential_reading_score': readingPatterns.sequentialScore,
+            
+            // Audio engagement
+            'audio_enabled': !!audioElement,
+            'audio_playback_count': parseInt(localStorage.getItem('audioPlaybackCount') || '0'),
+            
+            // Device context
+            'device_type': /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+            'screen_resolution': `${screen.width}x${screen.height}`,
+            'browser_language': navigator.language,
+            'viewport_height': window.innerHeight,
+            'viewport_width': window.innerWidth,
+            'device_pixel_ratio': window.devicePixelRatio || 1,
+            
+            // User engagement
+            'zoom_level': scale,
+            'interaction_count': parseInt(localStorage.getItem('interactionCount') || '0'),
+            'time_of_day': new Date().getHours()
+        });
+    }
+}
+
+// Calculate reading completion
+function calculateReadingCompletion() {
+    const readPages = new Set(JSON.parse(localStorage.getItem('readingHistory') || '[]')
+        .map(entry => entry.page));
+    return {
+        unique_pages_read: readPages.size,
+        completion_percentage: ((readPages.size / totalPages) * 100).toFixed(2)
+    };
+}
+
+// Analyze reading patterns
+function analyzeReadingPatterns(history) {
+    if (history.length < 2) {
+        return {
+            pattern: 'starting',
+            backTrackCount: 0,
+            sequentialScore: 1
+        };
+    }
+
+    let backTrackCount = 0;
+    let sequentialMoves = 0;
+    let pattern = 'sequential';
+
+    for (let i = 1; i < history.length; i++) {
+        const pageDiff = history[i].page - history[i-1].page;
+        
+        if (pageDiff < 0) {
+            backTrackCount++;
+            pattern = backTrackCount > 3 ? 'research' : 'review';
+        } else if (pageDiff === 1) {
+            sequentialMoves++;
+        } else if (pageDiff > 1) {
+            pattern = 'scanning';
+        }
+    }
+
+    const sequentialScore = sequentialMoves / (history.length - 1);
+
+    return {
+        pattern,
+        backTrackCount,
+        sequentialScore
+    };
+}
+
+// Calculate time spent on current page
+function calculateTimeOnPage(history) {
+    if (history.length < 2) return 0;
+    const lastEntry = history[history.length - 1];
+    const previousEntry = history[history.length - 2];
+    return Math.round((lastEntry.timestamp - previousEntry.timestamp) / 1000);
+}
+
+// Calculate pages read in current session
+function calculatePagesInSession(history) {
+    const sessionStart = new Date();
+    sessionStart.setHours(sessionStart.getHours() - 1);
+    
+    const sessionHistory = history.filter(entry => 
+        entry.timestamp > sessionStart.getTime()
+    );
+    
+    return new Set(sessionHistory.map(entry => entry.page)).size;
+}
+
+// Track user interactions
+function trackInteraction(interactionType) {
+    const count = parseInt(localStorage.getItem('interactionCount') || '0');
+    localStorage.setItem('interactionCount', count + 1);
+    
+    if (typeof gtag !== 'undefined') {
+        gtag('event', 'user_interaction', {
+            'event_category': 'PDF Reading',
+            'event_label': interactionType,
+            'session_id': sessionId
+        });
+    }
+}
+
+// Enhanced reading time tracking
+function trackReadingTime() {
+    if (typeof gtag !== 'undefined') {
+        const timeSpent = Math.round((Date.now() - readingStartTime) / 1000);
+        const deviceId = localStorage.getItem('deviceId');
+        const readingSessions = parseInt(localStorage.getItem('readingSessionCount') || '1');
+        
+        gtag('event', 'reading_time', {
+            'event_category': 'PDF Reading',
+            'event_label': url,
+            'value': timeSpent,
+            'session_id': sessionId,
+            'device_id': deviceId,
+            'average_session_duration': timeSpent / readingSessions,
+            'total_sessions': readingSessions,
+            'reading_streak': calculateReadingStreak()
+        });
+    }
+}
+
+// Calculate reading streak
+function calculateReadingStreak() {
+    const streakData = JSON.parse(localStorage.getItem('readingStreak') || '{"lastDate":"","count":0}');
+    const today = new Date().toDateString();
+    
+    if (streakData.lastDate === today) {
+        return streakData.count;
+    }
+    
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (streakData.lastDate === yesterday.toDateString()) {
+        streakData.count++;
+    } else {
+        streakData.count = 1;
+    }
+    
+    streakData.lastDate = today;
+    localStorage.setItem('readingStreak', JSON.stringify(streakData));
+    return streakData.count;
+}
+
+// Global variables for tracking
+let lastTrackingUpdate = 0;
+let sessionId;
+let totalPages = 0;
+let url;
+let readingStartTime;
+let scale = 1;
+let audioElement = null;
+const TRACKING_INTERVAL = 30000; // 30 seconds
+
 document.addEventListener("DOMContentLoaded", function() {
-    const url = 'Abidogun.pdf';
+    url = 'Abidogun.pdf';
     const pdfContainer = document.getElementById('pdf-container');
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
@@ -27,13 +268,9 @@ document.addEventListener("DOMContentLoaded", function() {
     // PDF variables
     let pdfDoc = null;
     let currentPage = 1;
-    let totalPages = 0;
     let pageRendering = false;
     let pageNumPending = null;
-    let scale = 1;
     let currentPageText = '';
-    let lastTrackingUpdate = 0;
-    const TRACKING_INTERVAL = 30000; // 30 seconds
 
     // Audio variables
     let audioElement = null;
@@ -45,42 +282,6 @@ document.addEventListener("DOMContentLoaded", function() {
     // Initialize synthesizer function
     function initializeSynthesizer() {
         isInitialized = true;
-    }
-
-    // Analytics tracking function using Google Analytics
-    function trackReading(page, action = 'read') {
-        const now = Date.now();
-        if (now - lastTrackingUpdate < TRACKING_INTERVAL && action === 'read') {
-            return;
-        }
-        
-        lastTrackingUpdate = now;
-
-        // Send event to Google Analytics
-        if (typeof gtag !== 'undefined') {
-            gtag('event', action, {
-                'event_category': 'PDF Reading',
-                'event_label': url,
-                'value': page,
-                'session_id': sessionId,
-                'total_pages': totalPages,
-                'progress_percentage': Math.round((page / totalPages) * 100)
-            });
-        }
-    }
-
-    // Track reading time
-    let readingStartTime = Date.now();
-    function trackReadingTime() {
-        if (typeof gtag !== 'undefined') {
-            const timeSpent = Math.round((Date.now() - readingStartTime) / 1000);
-            gtag('event', 'reading_time', {
-                'event_category': 'PDF Reading',
-                'event_label': url,
-                'value': timeSpent,
-                'session_id': sessionId
-            });
-        }
     }
 
     // PDF.js initialization
