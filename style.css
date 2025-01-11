@@ -16,11 +16,10 @@ body {
 }
 
 #pdf-container {
-    position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    bottom: 90px; /* Height of controls (40px + 50px) */
+    /* bottom: 90px; Height of controls (40px + 50px) */
     display: flex;
     justify-content: center;
     align-items: center;
@@ -37,7 +36,6 @@ body {
 }
 
 #controls-wrapper {
-    position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
@@ -109,4 +107,34 @@ button:disabled {
     #pdf-container {
         bottom: 90px; /* Same as desktop since controls are same height */
     }
+}
+
+/* Prevent zoom affecting controls */
+#controls-wrapper {
+    position: fixed;  /* Change from absolute to fixed */
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;  /* Ensure controls stay on top */
+    touch-action: none;  /* Prevent touch events from affecting controls */
+    -webkit-touch-callout: none;  /* Prevent iOS callout */
+    -webkit-user-select: none;    /* Prevent selection */
+    user-select: none;
+}
+
+/* Update PDF container to work with fixed controls */
+#pdf-container {
+    position: fixed;  /* Change from absolute to fixed */
+    bottom: 90px;    /* Match the control height */
+    touch-action: pan-x pan-y pinch-zoom;  /* Allow specific touch actions */
+}
+
+/* Add overscroll behavior to prevent bounce */
+html, body {
+    overscroll-behavior: none;
+}
+
+/* Prevent iOS double-tap zoom on buttons */
+button {
+    touch-action: manipulation;
 }
