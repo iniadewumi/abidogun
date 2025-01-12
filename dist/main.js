@@ -167,7 +167,7 @@ async function synthesizeAudio(text) {
                 audioConfig: {
                     audioEncoding: 'LINEAR16',
                     pitch: 0,
-                    speakingRate: 1
+                    speakingRate: 0.8
                 }
             })
         });
