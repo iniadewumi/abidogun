@@ -85,9 +85,12 @@ let audioData = null;
 let isInitialized = false;
 let isSpeaking = false;
 let isPaused = false;
+let initializationAttempted = false;
 
-// Initialize synthesizer function
+
 async function initializeSynthesizer() {
+    if (initializationAttempted) return;
+    
     try {
         const jwt = await generateJWT();
         const response = await fetch('https://oauth2.googleapis.com/token', {
@@ -102,7 +105,7 @@ async function initializeSynthesizer() {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to get access token');
+            throw new Error('Token fetch failed');
         }
 
         const data = await response.json();
@@ -110,13 +113,19 @@ async function initializeSynthesizer() {
         localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
         isInitialized = true;
     } catch (error) {
-        console.error('Error initializing TTS:', error);
-        throw error;
+        console.error('TTS Init Error:', error);
+    } finally {
+        initializationAttempted = true;
+        updateButtonStates(false);
     }
 }
 
 // Audio control functions
 async function playAudio(text) {
+    if (!isInitialized) {
+        await initializeSynthesizer();
+    }
+
     if (isSpeaking && !isPaused) {
         return;
     }
@@ -125,12 +134,7 @@ async function playAudio(text) {
         audioElement.play();
         isSpeaking = true;
         isPaused = false;
-        updateAudioControls();
-    } else if (audioElement) {
-        audioElement.play();
-        isSpeaking = true;
-        isPaused = false;
-        updateAudioControls();
+        updateButtonStates(false);
     } else {
         await synthesizeAudio(text);
     }
@@ -167,7 +171,7 @@ async function synthesizeAudio(text) {
                 audioConfig: {
                     audioEncoding: 'LINEAR16',
                     pitch: 0,
-                    speakingRate: 0.8
+                    speakingRate: 0.85
                 }
             })
         });
@@ -209,7 +213,68 @@ async function synthesizeAudio(text) {
         isPaused = false;
         updateAudioControls();
     }
+}async function processPageText(page) {
+    const textContent = await page.getTextContent();
+
+    // First combine all text items into a single string with their positions
+    let items = textContent.items.map(item => ({
+        text: item.str,
+        x: item.transform[4],  // x position
+        y: item.transform[5],  // y position
+        width: item.width,
+        height: item.height
+    }));
+
+    // Sort items by y position (top to bottom) and then x position (left to right)
+    items.sort((a, b) => {
+        // Use a small threshold for y-position comparison to handle slight misalignments
+        const yDiff = Math.abs(b.y - a.y);
+        if (yDiff < 1) {
+            return a.x - b.x;
+        }
+        return b.y - a.y;
+    });
+
+    // Combine text on the same line and fix common ligature issues
+    let lines = [];
+    let currentLine = [];
+    let currentY = items[0]?.y;
+
+    items.forEach(item => {
+        if (Math.abs(item.y - currentY) > 1) {
+            // New line detected
+            if (currentLine.length > 0) {
+                lines.push(currentLine);
+                currentLine = [];
+            }
+            currentY = item.y;
+        }
+        currentLine.push(item);
+    });
+    if (currentLine.length > 0) {
+        lines.push(currentLine);
+    }
+
+    // Process each line to combine words and fix ligatures
+    const processedText = lines.map(line => {
+        let lineText = line.map(item => item.text).join('');
+
+        // Fix common ligature breaks while preserving spaces
+        lineText = lineText
+            .replace(/\bf\s?i\b/g, 'fi') // Preserve preceding spaces
+            .replace(/\bf\s?l\b/g, 'fl')
+            .replace(/\bf\s?f\b/g, 'ff')
+            .replace(/\bt\s?t\b/g, 'tt')
+            .replace(/\bf\s?t\b/g, 'ft')
+            .replace(/\s+/g, ' ') // Replace multiple spaces with a single space
+            .trim();
+
+        return lineText;
+    }).join('\n');
+
+    return processedText;
 }
+
 
 function setupAudioEventListeners() {
     audioElement.addEventListener('ended', () => {
@@ -270,13 +335,14 @@ function updateButtonStates(disabled) {
     const stopButton = document.getElementById('stop-audio');
 
     if (playButton) {
+        // Enable play button if we're not speaking or if we're paused
         playButton.disabled = disabled || (isSpeaking && !isPaused);
     }
     if (pauseButton) {
-        pauseButton.disabled = disabled || (!isSpeaking || isPaused);
+        pauseButton.disabled = disabled || !isSpeaking || isPaused;
     }
     if (stopButton) {
-        stopButton.disabled = disabled || (!isSpeaking && !isPaused && (!audioElement || audioElement.currentTime === 0));
+        stopButton.disabled = disabled || (!isSpeaking && !isPaused);
     }
 }
 
@@ -404,8 +470,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 
             await page.render(renderContext).promise;
             
-            const textContent = await page.getTextContent();
-            currentPageText = textContent.items.map(item => item.str).join(' ');
+            currentPageText = await processPageText(page);
 
             pdfContainer.innerHTML = '';
             pdfContainer.appendChild(canvas);
