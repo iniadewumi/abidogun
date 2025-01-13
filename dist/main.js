@@ -8,6 +8,27 @@ function str2ab(str) {
     return buf;
 }
 
+function showLoading() {
+    document.getElementById('loading-overlay').classList.remove('hidden');
+}
+
+function hideLoading() {
+    document.getElementById('loading-overlay').classList.add('hidden');
+}
+
+function showMessage(message, color, duration = 5000) {
+    const messageBox = document.getElementById('message-box');
+    messageBox.textContent = message;
+    messageBox.classList.remove('hidden');
+    messageBox.classList.add(color);
+
+    // Hide the message after a duration
+    setTimeout(() => {
+        messageBox.classList.add('hidden');
+    }, duration);
+}
+
+
 async function signWithPrivateKey(input, privateKey) {
     try {
         // Convert PEM private key to crypto key format
@@ -122,23 +143,34 @@ async function initializeSynthesizer() {
 
 // Audio control functions
 async function playAudio(text) {
-    if (!isInitialized) {
-        await initializeSynthesizer();
-    }
+    showLoading();
 
-    if (isSpeaking && !isPaused) {
-        return;
-    }
+    try {
+        if (!isInitialized) {
+            await initializeSynthesizer();
+        }
 
-    if (audioElement && isPaused) {
-        audioElement.play();
-        isSpeaking = true;
-        isPaused = false;
-        updateButtonStates(false);
-    } else {
-        await synthesizeAudio(text);
+        if (isSpeaking && !isPaused) {
+            return;
+        }
+
+        if (audioElement && isPaused) {
+            await audioElement.play();
+            isSpeaking = true;
+            isPaused = false;
+            updateButtonStates(false);
+        } else {
+            await synthesizeAudio(text);
+            showMessage("Audio playing...", "green");
+        }
+    } catch (error) {
+        console.error("Error in playAudio:", error);
+        showMessage(`Failed to play audio. Please try again. You might need to clear cache: ${error}`, "red");
+    } finally {
+        hideLoading();
     }
 }
+
 
 async function synthesizeAudio(text) {
     if (!isInitialized) {
@@ -531,8 +563,11 @@ document.addEventListener("DOMContentLoaded", async function() {
     // Initialize the application
     async function init() {
         try {
+            showLoading();
             await initializeTTSControls();
-            await loadPDF('Abidogun.pdf'); // Replace with your PDF URL
+            await loadPDF('Abidogun.pdf');
+            hideLoading();
+            
         } catch (error) {
             console.error('Error initializing application:', error);
         }
@@ -541,3 +576,4 @@ document.addEventListener("DOMContentLoaded", async function() {
     // Start the application
     init();
 });
+
