@@ -134,6 +134,7 @@ async function initializeSynthesizer() {
         localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
         isInitialized = true;
     } catch (error) {
+        showMessage(`Failed to play audio. Please try again. You might need to clear cache: ${error}`, "red");
         console.error('TTS Init Error:', error);
     } finally {
         initializationAttempted = true;
@@ -159,9 +160,9 @@ async function playAudio(text) {
             isSpeaking = true;
             isPaused = false;
             updateButtonStates(false);
+            showMessage("Audio playing...", "green");
         } else {
             await synthesizeAudio(text);
-            showMessage("Audio playing...", "green");
         }
     } catch (error) {
         console.error("Error in playAudio:", error);
