@@ -1,3 +1,6 @@
+//main.js
+
+
 // Helper Functions
 function str2ab(str) {
     const buf = new ArrayBuffer(str.length);
@@ -6,6 +9,11 @@ function str2ab(str) {
         bufView[i] = str.charCodeAt(i);
     }
     return buf;
+}
+
+async function clearStoredTokens() {
+    localStorage.removeItem('gcp_access_token');
+    localStorage.removeItem('gcp_token_expiry');
 }
 
 function showLoading() {
@@ -29,9 +37,46 @@ function showMessage(message, color, duration = 5000) {
 }
 
 
-async function signWithPrivateKey(input, privateKey) {
+// TTS Implementation
+let audioContext = null;
+let audioElement = null;
+let audioData = null;
+let isInitialized = false;
+let isSpeaking = false;
+let isPaused = false;
+let initializationAttempted = false;
+
+//Clear token
+let hasRetried = false; // Tracks if retry has occurred
+
+
+async function initializeAudioContext() {
     try {
-        // Convert PEM private key to crypto key format
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!audioContext) {
+            audioContext = new AudioContext();
+        }
+        
+        // Mobile browsers often require user interaction to start audio context
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+        
+        return audioContext;
+    } catch (error) {
+        console.error('Audio Context initialization failed:', error);
+        showMessage('Audio initialization failed. Please check if audio is enabled on your device.', 'red');
+        throw error;
+    }
+}
+
+async function signWithPrivateKey(input, privateKey) {
+    if (!window.crypto || !window.crypto.subtle) {
+        console.warn('Web Crypto API is not available. Falling back to node-forge.');
+        return signWithPrivateKeyFallback(input, privateKey); // Use a fallback library
+    }
+
+    try {
         const pemHeader = "-----BEGIN PRIVATE KEY-----";
         const pemFooter = "-----END PRIVATE KEY-----";
         const pemContents = privateKey.substring(
@@ -39,11 +84,9 @@ async function signWithPrivateKey(input, privateKey) {
             privateKey.indexOf(pemFooter)
         ).replace(/\s/g, '');
         
-        // Create binary DER
         const binaryDer = window.atob(pemContents);
         const derBuffer = str2ab(binaryDer);
         
-        // Import the private key
         const cryptoKey = await crypto.subtle.importKey(
             'pkcs8',
             derBuffer,
@@ -55,7 +98,6 @@ async function signWithPrivateKey(input, privateKey) {
             ['sign']
         );
         
-        // Sign the input
         const textEncoder = new TextEncoder();
         const inputBuffer = textEncoder.encode(input);
         const signature = await crypto.subtle.sign(
@@ -64,7 +106,6 @@ async function signWithPrivateKey(input, privateKey) {
             inputBuffer
         );
         
-        // Convert the signature to base64
         const signatureArray = new Uint8Array(signature);
         const signatureBase64 = btoa(String.fromCharCode.apply(null, signatureArray));
         return signatureBase64;
@@ -74,10 +115,19 @@ async function signWithPrivateKey(input, privateKey) {
     }
 }
 
+
+// Fallback using node-forge
+function signWithPrivateKeyFallback(input, privateKey) {
+    const privateKeyObj = forge.pki.privateKeyFromPem(privateKey);
+    const md = forge.md.sha256.create();
+    md.update(input, 'utf8');
+    const signature = privateKeyObj.sign(md);
+    return forge.util.encode64(signature);
+}
 // Generate JWT for GCP authentication
 async function generateJWT() {
     const now = Math.floor(Date.now() / 1000);
-    const exp = now + 3600; // Token expires in 1 hour
+    const exp = now + 3600;
 
     const header = {
         alg: 'RS256',
@@ -100,19 +150,17 @@ async function generateJWT() {
     return `${encodedHeader}.${encodedPayload}.${signature}`;
 }
 
-// TTS Implementation
-let audioElement = null;
-let audioData = null;
-let isInitialized = false;
-let isSpeaking = false;
-let isPaused = false;
-let initializationAttempted = false;
+
+
 
 
 async function initializeSynthesizer() {
-    if (initializationAttempted) return;
+    if (isInitialized) return; //
     
     try {
+        // Initialize audio context first
+        await initializeAudioContext();
+        
         const jwt = await generateJWT();
         const response = await fetch('https://oauth2.googleapis.com/token', {
             method: 'POST',
@@ -126,7 +174,7 @@ async function initializeSynthesizer() {
         });
 
         if (!response.ok) {
-            throw new Error('Token fetch failed');
+            throw new Error('Token fetch failed: ' + response.statusText);
         }
 
         const data = await response.json();
@@ -134,39 +182,63 @@ async function initializeSynthesizer() {
         localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
         isInitialized = true;
     } catch (error) {
-        showMessage(`Failed to play audio. Please try again. You might need to clear cache: ${error}`, "red");
         console.error('TTS Init Error:', error);
+        if (!hasRetried) {
+            console.warn('Retrying initialization...');
+            hasRetried = true; // Mark the retry as done
+            await clearStoredTokens(); // Clear tokens and retry
+            await initializeSynthesizer();
+        } else {
+            console.error('Retry failed. Initialization aborted.');
+            showMessage(`Failed to initialize audio: ${error.message}`, "red");
+        }
+        
     } finally {
         initializationAttempted = true;
         updateButtonStates(false);
     }
 }
 
-// Audio control functions
 async function playAudio(text) {
     showLoading();
 
     try {
+        if (!audioContext || audioContext.state === 'suspended') {
+            showMessage('Please tap anywhere on the page to enable audio playback', 'blue', 3000);
+            hideLoading();
+            return;
+        }
         if (!isInitialized) {
             await initializeSynthesizer();
         }
 
         if (isSpeaking && !isPaused) {
+            hideLoading();
             return;
         }
 
         if (audioElement && isPaused) {
-            await audioElement.play();
-            isSpeaking = true;
-            isPaused = false;
-            updateButtonStates(false);
-            showMessage("Audio playing...", "green");
+            try {
+                showLoading(); // Added this line
+                await audioElement.play();
+                isSpeaking = true;
+                isPaused = false;
+                updateAudioControls();
+                showMessage('Audio playing...', 'green');
+            } catch (playError) {
+                console.error('Playback failed:', playError);
+                showMessage(`Playback failed: ${playError.message}`, 'red');
+                throw playError;
+            } finally {}
         } else {
             await synthesizeAudio(text);
         }
     } catch (error) {
         console.error("Error in playAudio:", error);
-        showMessage(`Failed to play audio. Please try again. You might need to clear cache: ${error}`, "red");
+        showMessage(`Failed to play audio: ${error.message}`, "red");
+        isSpeaking = false;
+        isPaused = false;
+        updateButtonStates(false);
     } finally {
         hideLoading();
     }
@@ -178,11 +250,11 @@ async function synthesizeAudio(text) {
         await initializeSynthesizer();
     }
 
-    // Check token expiry
     const tokenExpiry = localStorage.getItem('gcp_token_expiry');
     if (!tokenExpiry || Date.now() > parseInt(tokenExpiry)) {
-        await initializeSynthesizer();
+        throw new Error('Token expired. Please reinitialize the synthesizer.');
     }
+    
 
     updateButtonStates(true);
 
@@ -202,7 +274,7 @@ async function synthesizeAudio(text) {
                     name: 'en-US-Neural2-F'
                 },
                 audioConfig: {
-                    audioEncoding: 'LINEAR16',
+                    audioEncoding: 'MP3',
                     pitch: 0,
                     speakingRate: 0.85
                 }
@@ -210,20 +282,29 @@ async function synthesizeAudio(text) {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            if (response.status === 401) {
+                // Clear tokens and retry once
+                await clearStoredTokens();
+                await initializeSynthesizer();
+                return synthesizeAudio(text); // Retry the synthesis
+            }
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || 'Unknown error'}`);
         }
 
         const result = await response.json();
+        if (!result.audioContent) {
+            throw new Error('No audio content received from server');
+        }
+
         const audioContent = result.audioContent;
-        
-        // Convert base64 to audio buffer
         const binaryString = window.atob(audioContent);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
 
-        const blob = new Blob([bytes], { type: 'audio/wav' });
+        const blob = new Blob([bytes], { type: 'audio/mpeg' });
         const url = URL.createObjectURL(blob);
 
         if (audioElement) {
@@ -234,19 +315,31 @@ async function synthesizeAudio(text) {
         audioElement = new Audio(url);
         setupAudioEventListeners();
         
-        audioElement.play();
-        isSpeaking = true;
-        isPaused = false;
-        updateAudioControls();
+        try {
+            await audioElement.play();
+            isSpeaking = true;
+            isPaused = false;
+            updateAudioControls();
+            showMessage('Audio playing...', 'green');
+        } catch (playError) {
+            console.error('Playback failed:', playError);
+            showMessage(`Playback failed: ${playError.message}`, 'red');
+            throw playError;
+        }
         
         audioData = bytes;
     } catch (error) {
         console.error('Error synthesizing speech:', error);
+        showMessage(`Speech synthesis failed: ${error.message}`, 'red');
         isSpeaking = false;
         isPaused = false;
         updateAudioControls();
+        throw error;
     }
-}async function processPageText(page) {
+}
+
+
+async function processPageText(page) {
     const textContent = await page.getTextContent();
 
     // First combine all text items into a single string with their positions
@@ -310,6 +403,16 @@ async function synthesizeAudio(text) {
 
 
 function setupAudioEventListeners() {
+    if (!audioElement) return;
+
+    const errorHandler = (error) => {
+        console.error('Audio playback error:', error);
+        showMessage(`Audio playback error: ${error.message}`, 'red');
+        isSpeaking = false;
+        isPaused = false;
+        updateAudioControls();
+    };
+
     audioElement.addEventListener('ended', () => {
         isSpeaking = false;
         isPaused = false;
@@ -317,10 +420,12 @@ function setupAudioEventListeners() {
         URL.revokeObjectURL(audioElement.src);
     });
 
+
     audioElement.addEventListener('playing', () => {
         isSpeaking = true;
         isPaused = false;
         updateAudioControls();
+        hideLoading();
     });
 
     audioElement.addEventListener('pause', () => {
@@ -332,13 +437,26 @@ function setupAudioEventListeners() {
     });
 
     audioElement.addEventListener('error', (e) => {
-        console.error('Audio playback error:', e);
-        isSpeaking = false;
-        isPaused = false;
-        updateAudioControls();
+        hideLoading(); // Added this line
+        errorHandler(e);
+    });
+    audioElement.addEventListener('stalled', () => {
+        hideLoading(); // Added this line
+        errorHandler(new Error('Audio playback stalled'));
+    });
+    audioElement.addEventListener('abort', () => {
+        hideLoading(); // Added this line
+        errorHandler(new Error('Audio playback aborted'));
+    });
+
+    audioElement.addEventListener('waiting', () => {
+        showMessage('Buffering audio...', 'blue');
+    });
+
+    audioElement.addEventListener('canplaythrough', () => {
+        hideLoading();
     });
 }
-
 function pauseAudio() {
     if (audioElement && isSpeaking && !isPaused) {
         audioElement.pause();
@@ -362,13 +480,13 @@ function updateAudioControls() {
     updateButtonStates(false);
 }
 
+
 function updateButtonStates(disabled) {
     const playButton = document.getElementById('play-audio');
     const pauseButton = document.getElementById('pause-audio');
     const stopButton = document.getElementById('stop-audio');
 
     if (playButton) {
-        // Enable play button if we're not speaking or if we're paused
         playButton.disabled = disabled || (isSpeaking && !isPaused);
     }
     if (pauseButton) {
@@ -379,18 +497,9 @@ function updateButtonStates(disabled) {
     }
 }
 
-// Expose TTS functions
-window.TTS = {
-    initializeSynthesizer,
-    playAudio,
-    pauseAudio,
-    stopAudio,
-    updateAudioControls
-};
 
-// PDF viewer implementation starts here...
+
 document.addEventListener("DOMContentLoaded", async function() {
-    // Initialize variables
     let currentPage = 1;
     let pageRendering = false;
     let pageNumPending = null;
@@ -398,29 +507,35 @@ document.addEventListener("DOMContentLoaded", async function() {
     let pdfDoc = null;
     let totalPages = 0;
     let currentPageText = '';
-    let readingStartTime = Date.now();
     
-    // Get DOM elements
     const pdfContainer = document.getElementById('pdf-container');
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
     const currentPageInput = document.getElementById('current-page');
     const totalPagesElement = document.getElementById('total-pages');
 
-    // Initialize PDF.js
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-    // Initialize TTS controls
-    async function initializeTTSControls() {
+    // New code
+    setupTTSButtons();
+    await loadPDF('Abidogun.pdf');
+
+    // Add a one-time click handler to initialize audio
+    const initAudioHandler = async () => {
         try {
-            await window.TTS.initializeSynthesizer();
-            setupTTSButtons();
-            window.TTS.updateAudioControls();
+            showLoading();
+            await initializeAudioContext();
+            await initializeSynthesizer();
+            document.removeEventListener('click', initAudioHandler);
+            hideLoading();
         } catch (error) {
-            console.error('Error initializing TTS:', error);
-            disableTTSButtons();
+            console.error('Error initializing audio:', error);
+            showMessage('Failed to initialize audio system. Please refresh and try again.', 'red');
         }
-    }
+    };
+
+    // Listen for the first user interaction
+    document.addEventListener('click', initAudioHandler);
 
     function setupTTSButtons() {
         const playButton = document.getElementById('play-audio');
@@ -428,29 +543,34 @@ document.addEventListener("DOMContentLoaded", async function() {
         const stopButton = document.getElementById('stop-audio');
 
         if (playButton) {
-            playButton.addEventListener('click', () => {
-                if (window.TTS && currentPageText) {
-                    window.TTS.playAudio(currentPageText);
+            // New code
+            playButton.addEventListener('click', async () => {
+                if (!audioContext) {
+                    try {
+                        await initializeAudioContext();
+                        await initializeSynthesizer();
+                    } catch (error) {
+                        console.error('Failed to initialize audio:', error);
+                        showMessage('Failed to initialize audio. Please try again.', 'red');
+                        return;
+                    }
+                }
+                
+                if (currentPageText) {
+                    playAudio(currentPageText);
                 }
             });
         }
 
         if (pauseButton) {
-            pauseButton.addEventListener('click', () => {
-                if (window.TTS) {
-                    window.TTS.pauseAudio();
-                }
-            });
+            pauseButton.addEventListener('click', pauseAudio);
         }
 
         if (stopButton) {
-            stopButton.addEventListener('click', () => {
-                if (window.TTS) {
-                    window.TTS.stopAudio();
-                }
-            });
+            stopButton.addEventListener('click', stopAudio);
         }
     }
+
 
     function disableTTSButtons() {
         ['play-audio', 'pause-audio', 'stop-audio'].forEach(id => {
@@ -541,7 +661,6 @@ document.addEventListener("DOMContentLoaded", async function() {
             queueRenderPage(newPage);
         }
     }
-
     function updateUI() {
         if (prevPageBtn) prevPageBtn.disabled = (currentPage <= 1);
         if (nextPageBtn) nextPageBtn.disabled = (currentPage >= totalPages);
@@ -565,12 +684,29 @@ document.addEventListener("DOMContentLoaded", async function() {
     async function init() {
         try {
             showLoading();
-            await initializeTTSControls();
-            await loadPDF('Abidogun.pdf');
-            hideLoading();
+            setupTTSButtons(); // Set up buttons first
+            await loadPDF('Abidogun.pdf'); // Load PDF immediately
             
+            // Add click handler for audio initialization
+            const initAudioHandler = async () => {
+                try {
+                    await initializeAudioContext();
+                    await initializeSynthesizer();
+                    document.removeEventListener('click', initAudioHandler);
+                } catch (error) {
+                    console.error('Error initializing audio:', error);
+                    showMessage('Failed to initialize audio system. Please refresh and try again.', 'red');
+                }
+            };
+            
+            // Listen for first user interaction
+            document.addEventListener('click', initAudioHandler);
+            
+            hideLoading();
         } catch (error) {
             console.error('Error initializing application:', error);
+            hideLoading();
+            showMessage('Failed to initialize application. Please refresh and try again.', 'red');
         }
     }
 
@@ -578,3 +714,11 @@ document.addEventListener("DOMContentLoaded", async function() {
     init();
 });
 
+// Expose TTS functions
+window.TTS = {
+    initializeSynthesizer,
+    playAudio,
+    pauseAudio,
+    stopAudio,
+    updateAudioControls
+};
