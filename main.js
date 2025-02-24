@@ -150,36 +150,75 @@ async function generateJWT() {
     return `${encodedHeader}.${encodedPayload}.${signature}`;
 }
 
+async function validateStoredToken() {
+    const storedToken = localStorage.getItem('gcp_access_token');
+    const tokenExpiry = localStorage.getItem('gcp_token_expiry');
+    
+    // Clear tokens if they don't exist or are expired
+    if (!storedToken || !tokenExpiry || Date.now() > parseInt(tokenExpiry)) {
+        await clearStoredTokens();
+        return false;
+    }
+    
+    // Test if the token is still valid with a lightweight API call
+    try {
+        const response = await fetch('https://texttospeech.googleapis.com/v1/voices', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${storedToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            console.warn('Stored token is invalid. Clearing and regenerating...');
+            await clearStoredTokens();
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Error validating token:', error);
+        await clearStoredTokens();
+        return false;
+    }
+}
 
 
 
 
 async function initializeSynthesizer() {
-    if (isInitialized) return; //
+    if (isInitialized) return;
     
     try {
         // Initialize audio context first
         await initializeAudioContext();
         
-        const jwt = await generateJWT();
-        const response = await fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                assertion: jwt
-            })
-        });
+        // Check if we have a valid stored token
+        const isTokenValid = await validateStoredToken();
+        
+        if (!isTokenValid) {
+            const jwt = await generateJWT();
+            const response = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                    assertion: jwt
+                })
+            });
 
-        if (!response.ok) {
-            throw new Error('Token fetch failed: ' + response.statusText);
+            if (!response.ok) {
+                throw new Error('Token fetch failed: ' + response.statusText);
+            }
+
+            const data = await response.json();
+            localStorage.setItem('gcp_access_token', data.access_token);
+            localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
         }
-
-        const data = await response.json();
-        localStorage.setItem('gcp_access_token', data.access_token);
-        localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
+        
         isInitialized = true;
     } catch (error) {
         console.error('TTS Init Error:', error);
@@ -192,7 +231,6 @@ async function initializeSynthesizer() {
             console.error('Retry failed. Initialization aborted.');
             showMessage(`Failed to initialize audio: ${error.message}`, "red");
         }
-        
     } finally {
         initializationAttempted = true;
         updateButtonStates(false);
@@ -249,13 +287,6 @@ async function synthesizeAudio(text) {
     if (!isInitialized) {
         await initializeSynthesizer();
     }
-
-    const tokenExpiry = localStorage.getItem('gcp_token_expiry');
-    if (!tokenExpiry || Date.now() > parseInt(tokenExpiry)) {
-        throw new Error('Token expired. Please reinitialize the synthesizer.');
-    }
-    
-
     updateButtonStates(true);
 
     try {
@@ -282,9 +313,10 @@ async function synthesizeAudio(text) {
         });
 
         if (!response.ok) {
-            if (response.status === 401) {
-                // Clear tokens and retry once
+            if (response.status === 401 || response.status === 403) {
+                // Clear tokens and reinitialize
                 await clearStoredTokens();
+                isInitialized = false;
                 await initializeSynthesizer();
                 return synthesizeAudio(text); // Retry the synthesis
             }
@@ -337,7 +369,6 @@ async function synthesizeAudio(text) {
         throw error;
     }
 }
-
 
 async function processPageText(page) {
     const textContent = await page.getTextContent();
