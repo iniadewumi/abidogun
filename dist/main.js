@@ -35,7 +35,81 @@ function showMessage(message, color, duration = 5000) {
         messageBox.classList.add('hidden');
     }, duration);
 }
+// Function to detect chapter titles based on specific attributes
+async function detectChapterTitle(page, pageNum) {
+    const textContent = await page.getTextContent();
+    
+    // Look for items with the specific chapter font and position characteristics
+    for (let i = 0; i < textContent.items.length; i++) {
+        const item = textContent.items[i];
+        // Check if this item matches chapter title characteristics
+        if (
+            // // Look for the specific font name used for chapter titles
+            // item.fontName.endsWith("_f2") &&
+            item.transform[5] > 680 && item.transform[5] < 710 &&
+            // Check for the expected height of chapter text
+            item.height > 13.0000005 && item.height < 19 &&
+            // Make sure it's not empty or too short
+            item.str.trim().length > 2
+        ) {
+            console.log(`Chapter title found on page ${pageNum}: "${item.str}" (Font: ${item.fontName}, Y-pos: ${item.transform[5]})`);
+            return item.str.trim();
+        }
+    }
+    
+    return null;
+}
 
+// Track chapters as we find them
+let detectedChapters = [];
+
+// Integration function to find chapters
+async function findChapters(pdfDocument) {
+    console.log("Starting chapter detection with specific font and position criteria...");
+    detectedChapters = [];
+    
+    for (let i = 1; i <= pdfDocument.numPages; i++) {
+        try {
+            const page = await pdfDocument.getPage(i);
+            const chapterTitle = await detectChapterTitle(page, i);
+            
+            if (chapterTitle) {
+                detectedChapters.push({ 
+                    pageNum: i, 
+                    title: chapterTitle 
+                });
+            }
+        } catch (error) {
+            console.error(`Error processing page ${i}:`, error);
+        }
+    }
+    
+    console.log("Chapter detection complete, found " + detectedChapters.length + " chapters:");
+    console.table(detectedChapters);
+    return detectedChapters;
+}
+
+// Optional: Create a function to navigate to chapters
+function navigateToChapter(chapterIndex) {
+    if (detectedChapters.length === 0) {
+        console.warn("No chapters detected yet");
+        return false;
+    }
+    
+    if (chapterIndex >= 0 && chapterIndex < detectedChapters.length) {
+        const pageNum = detectedChapters[chapterIndex].pageNum;
+        console.log(`Navigating to chapter "${detectedChapters[chapterIndex].title}" on page ${pageNum}`);
+        
+        // Assuming you have these functions defined elsewhere
+        if (typeof queueRenderPage === 'function') {
+            queueRenderPage(pageNum);
+            return true;
+        }
+    }
+    
+    console.warn(`Invalid chapter index: ${chapterIndex}`);
+    return false;
+}
 
 // TTS Implementation
 let audioContext = null;
@@ -45,6 +119,67 @@ let isInitialized = false;
 let isSpeaking = false;
 let isPaused = false;
 let initializationAttempted = false;
+let speakingRate = 1; 
+
+function createSpeedSlider() {
+    // Find the audio controls container
+    const audioControls = document.getElementById('audio-controls');
+    if (!audioControls) return;
+    
+    // Create a container for the speed control
+    const speedControl = document.createElement('div');
+    speedControl.id = 'speed-control';
+    speedControl.className = 'speed-control';
+    
+    // Create label
+    const label = document.createElement('label');
+    label.htmlFor = 'speed-slider';
+    label.textContent = 'Speed:';
+    
+    // Create speed value display
+    const speedValue = document.createElement('span');
+    speedValue.id = 'speed-value';
+    speedValue.textContent = '1x';
+    
+    // Create slider
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.id = 'speed-slider';
+    slider.min = '0.5';
+    slider.max = '2';
+    slider.step = '0.1';
+    slider.value = '1';  // Match the default value
+    
+    // Add event listener to update speed value and store in localStorage
+    slider.addEventListener('input', function() {
+        const newRate = parseFloat(this.value);
+        speakingRate = newRate;
+        
+        // Update displayed value (rounded to 1 decimal place)
+        const displayValue = Math.round(newRate * 10) / 10;
+        speedValue.textContent = displayValue + 'x';
+        
+        // Store in localStorage for persistence
+        localStorage.setItem('narrationSpeed', newRate);
+    });
+    
+    // Assemble the control
+    speedControl.appendChild(label);
+    speedControl.appendChild(slider);
+    speedControl.appendChild(speedValue);
+    
+    // Add to audio controls
+    audioControls.appendChild(speedControl);
+    
+    // Load saved speed if available
+    const savedSpeed = localStorage.getItem('narrationSpeed');
+    if (savedSpeed) {
+        slider.value = savedSpeed;
+        speakingRate = parseFloat(savedSpeed);
+        const displayValue = Math.round(speakingRate * 10) / 10;
+        speedValue.textContent = displayValue + 'x';
+    }
+}
 
 //Clear token
 let hasRetried = false; // Tracks if retry has occurred
@@ -306,8 +441,8 @@ async function synthesizeAudio(text) {
                 },
                 audioConfig: {
                     audioEncoding: 'MP3',
-                    pitch: 0,
-                    speakingRate: 0.85
+                    pitch: 0,        
+                    speakingRate: speakingRate 
                 }
             })
         });
@@ -547,9 +682,6 @@ document.addEventListener("DOMContentLoaded", async function() {
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-    // New code
-    setupTTSButtons();
-    await loadPDF('Abidogun.pdf');
 
     // Add a one-time click handler to initialize audio
     const initAudioHandler = async () => {
@@ -572,7 +704,10 @@ document.addEventListener("DOMContentLoaded", async function() {
         const playButton = document.getElementById('play-audio');
         const pauseButton = document.getElementById('pause-audio');
         const stopButton = document.getElementById('stop-audio');
-
+        setTimeout(function() {
+            createSpeedSlider();
+        }, 500);
+        
         if (playButton) {
             // New code
             playButton.addEventListener('click', async () => {
@@ -620,18 +755,36 @@ document.addEventListener("DOMContentLoaded", async function() {
             pdfDoc = pdf;
             totalPages = pdf.numPages;
             totalPagesElement.textContent = totalPages;
-
+    
             currentPage = parseInt(localStorage.getItem('currentPage')) || 1;
             currentPage = Math.min(Math.max(currentPage, 1), totalPages);
             currentPageInput.value = currentPage;
-
+    
+            // Render the first page immediately
             await renderPage(currentPage);
+            
+            // Use the improved setTimeout approach from your paste.txt
+            console.log("PDF loaded, waiting before chapter detection...");
+            setTimeout(async () => {
+                console.log("Starting delayed chapter detection...");
+                try {
+                    const chapters = await findChapters(pdf);
+                    window.pdfChapters = chapters;
+                    console.log(`Found ${chapters.length} chapters`);
+                    console.table(chapters);
+                } catch (err) {
+                    console.error("Error in delayed chapter detection:", err);
+                }
+            }, 500); // delay
+            
+            return pdf;
         } catch (error) {
             console.error('Error loading PDF:', error);
             pdfContainer.innerHTML = '<p>Error loading PDF. Please try again later.</p>';
+            throw error;
         }
     }
-
+    
     async function renderPage(num) {
         pageRendering = true;
         try {
@@ -744,6 +897,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     // Start the application
     init();
 });
+
 
 // Expose TTS functions
 window.TTS = {
