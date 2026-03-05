@@ -3,6 +3,8 @@
 // Store detected chapters globally
 window.pdfChapters = [];
 let currentActiveChapter = -1;
+ 
+
 
 // Create and append the chapter sidebar elements
 function createChapterSidebar() {
