@@ -364,7 +364,7 @@ async function initializeSynthesizer() {
             await initializeSynthesizer();
         } else {
             console.error('Retry failed. Initialization aborted.');
-            showMessage(`Failed to initialize audio: ${error.message}`, "red");
+            showMessage('Audio features are unavailable right now.', 'red');
         }
     } finally {
         initializationAttempted = true;
@@ -408,7 +408,7 @@ async function playAudio(text) {
         }
     } catch (error) {
         console.error("Error in playAudio:", error);
-        showMessage(`Failed to play audio: ${error.message}`, "red");
+        showMessage('Unable to play audio right now. Please try again.', 'red');
         isSpeaking = false;
         isPaused = false;
         updateButtonStates(false);
@@ -693,7 +693,7 @@ document.addEventListener("DOMContentLoaded", async function() {
             hideLoading();
         } catch (error) {
             console.error('Error initializing audio:', error);
-            showMessage('Failed to initialize audio system. Please refresh and try again.', 'red');
+            showMessage('Audio features are unavailable right now. Please refresh the page or try again later.', 'red');
         }
     };
 
@@ -717,7 +717,7 @@ document.addEventListener("DOMContentLoaded", async function() {
                         await initializeSynthesizer();
                     } catch (error) {
                         console.error('Failed to initialize audio:', error);
-                        showMessage('Failed to initialize audio. Please try again.', 'red');
+                        showMessage('Audio features are unavailable right now. Please refresh the page or try again later.', 'red');
                         return;
                     }
                 }
