@@ -88,20 +88,22 @@ function showMessage(message, color, duration = 5000) {
         }
     }, duration);
 }
-// Section: font _f2, y 680–710, height 13–19. Subsection: same font, smaller height 10–<13.
+// Sections (level 0): font _f2, y 680–710, height 13–19.
+// Chapters/subsections (level 1): retry logic — y 680–710, height 13–19, length > 2, no font check.
 async function detectPageTitles(page, pageNum) {
     const textContent = await page.getTextContent();
     const entries = [];
     for (let i = 0; i < textContent.items.length; i++) {
         const item = textContent.items[i];
-        if (!item.fontName || !item.fontName.endsWith("_f2")) continue;
         const y = item.transform[5];
         const h = item.height;
         const trimmed = item.str.trim();
         if (trimmed.length <= 2) continue;
-        if (y > 680 && y < 710 && h > 13.0000005 && h < 19) {
+        // Section: current implementation (font _f2 required)
+        if (item.fontName && item.fontName.endsWith("_f2") && y > 680 && y < 710 && h > 13.0000005 && h < 19) {
             entries.push({ pageNum, title: trimmed, level: 0 });
-        } else if (h >= 10 && h < 13 && trimmed.length <= 80 && y > 100) {
+        } else if (y > 680 && y < 710 && h > 13.0000005 && h < 19) {
+            // Chapter/subsection: retry logic (position + size only, no font)
             entries.push({ pageNum, title: trimmed, level: 1 });
         }
     }
