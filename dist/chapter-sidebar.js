@@ -111,7 +111,7 @@ function updateChapterSidebar(chapters) {
         const chapterItem = document.createElement('li');
         
         const chapterButton = document.createElement('button');
-        chapterButton.className = 'chapter-item';
+        chapterButton.className = 'chapter-item' + (chapter.level === 1 ? ' chapter-item-sub' : '');
         chapterButton.setAttribute('data-page', chapter.pageNum);
         chapterButton.setAttribute('data-index', index);
         chapterButton.textContent = chapter.title;

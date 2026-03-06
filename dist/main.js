@@ -1,12 +1,12 @@
 //main.js
 
 
-// Helper Functions
+// Helper: binary string (e.g. atob output) → ArrayBuffer. For UTF-8 text use TextEncoder.
 function str2ab(str) {
     const buf = new ArrayBuffer(str.length);
     const bufView = new Uint8Array(buf);
     for (let i = 0, strLen = str.length; i < strLen; i++) {
-        bufView[i] = str.charCodeAt(i);
+        bufView[i] = str.charCodeAt(i) & 0xff;
     }
     return buf;
 }
@@ -24,91 +24,138 @@ function hideLoading() {
     document.getElementById('loading-overlay').classList.add('hidden');
 }
 
-function showMessage(message, color, duration = 5000) {
-    const messageBox = document.getElementById('message-box');
-    messageBox.textContent = message;
-    messageBox.classList.remove('hidden');
-    messageBox.classList.add(color);
+const AUDIO_INIT_TIMEOUT_MS = 10000;
 
-    // Hide the message after a duration
-    setTimeout(() => {
-        messageBox.classList.add('hidden');
+function showAudioLoading() {
+    const el = document.getElementById('audio-loading-progress');
+    if (el) {
+        el.classList.remove('hidden');
+        el.setAttribute('aria-hidden', 'false');
+    }
+}
+
+function hideAudioLoading() {
+    const el = document.getElementById('audio-loading-progress');
+    if (el) {
+        el.classList.add('hidden');
+        el.setAttribute('aria-hidden', 'true');
+    }
+}
+
+function timeoutPromise(ms, message) {
+    return new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(message)), ms);
+    });
+}
+
+let messageHideTimeoutId = null;
+const MESSAGE_DEBOUNCE_MS = 2500;
+let lastMessageText = '';
+let lastMessageColor = '';
+let lastMessageTime = 0;
+const MESSAGE_COLOR_CLASSES = ['red', 'green', 'blue'];
+
+function showMessage(message, color, duration = 5000) {
+    const now = Date.now();
+    if (message === lastMessageText && color === lastMessageColor && (now - lastMessageTime) < MESSAGE_DEBOUNCE_MS) {
+        return;
+    }
+    lastMessageText = message;
+    lastMessageColor = color;
+    lastMessageTime = now;
+
+    const messageBox = document.getElementById('message-box');
+    if (!messageBox) return;
+    if (messageHideTimeoutId) {
+        clearTimeout(messageHideTimeoutId);
+        messageHideTimeoutId = null;
+    }
+    messageBox.textContent = message;
+    messageBox.classList.remove('hidden', ...MESSAGE_COLOR_CLASSES);
+    messageBox.classList.add(color);
+    messageBox.style.display = '';
+
+    // Hide the message after a duration; re-query element and force hide so it always runs
+    messageHideTimeoutId = setTimeout(() => {
+        try {
+            const el = document.getElementById('message-box');
+            if (el) {
+                el.classList.add('hidden');
+                el.style.display = 'none';
+            }
+        } finally {
+            messageHideTimeoutId = null;
+        }
     }, duration);
 }
-// Function to detect chapter titles based on specific attributes
-async function detectChapterTitle(page, pageNum) {
+// Section: font _f2, y 680–710, height 13–19. Subsection: same font, smaller height 10–<13.
+async function detectPageTitles(page, pageNum) {
     const textContent = await page.getTextContent();
-    
-    // Look for items with the specific chapter font and position characteristics
+    const entries = [];
     for (let i = 0; i < textContent.items.length; i++) {
         const item = textContent.items[i];
-        // Check if this item matches chapter title characteristics
-        if (
-            // // Look for the specific font name used for chapter titles
-            // item.fontName.endsWith("_f2") &&
-            item.transform[5] > 680 && item.transform[5] < 710 &&
-            // Check for the expected height of chapter text
-            item.height > 13.0000005 && item.height < 19 &&
-            // Make sure it's not empty or too short
-            item.str.trim().length > 2
-        ) {
-            console.log(`Chapter title found on page ${pageNum}: "${item.str}" (Font: ${item.fontName}, Y-pos: ${item.transform[5]})`);
-            return item.str.trim();
+        if (!item.fontName || !item.fontName.endsWith("_f2")) continue;
+        const y = item.transform[5];
+        const h = item.height;
+        const trimmed = item.str.trim();
+        if (trimmed.length <= 2) continue;
+        if (y > 680 && y < 710 && h > 13.0000005 && h < 19) {
+            entries.push({ pageNum, title: trimmed, level: 0 });
+        } else if (h >= 10 && h < 13 && trimmed.length <= 80 && y > 100) {
+            entries.push({ pageNum, title: trimmed, level: 1 });
         }
     }
-    
-    return null;
+    return entries;
 }
 
-// Track chapters as we find them
+// Track chapters as we find them (flat list: level 0 = section, 1 = subsection).
 let detectedChapters = [];
 
-// Integration function to find chapters
 async function findChapters(pdfDocument) {
-    console.log("Starting chapter detection with specific font and position criteria...");
+    console.log("Starting chapter detection (sections + subsections)...");
     detectedChapters = [];
-    
-    for (let i = 1; i <= pdfDocument.numPages; i++) {
-        try {
-            const page = await pdfDocument.getPage(i);
-            const chapterTitle = await detectChapterTitle(page, i);
-            
-            if (chapterTitle) {
-                detectedChapters.push({ 
-                    pageNum: i, 
-                    title: chapterTitle 
+    const numPages = pdfDocument.numPages;
+
+    const results = await Promise.all(
+        Array.from({ length: numPages }, (_, i) => {
+            const pageNum = i + 1;
+            return pdfDocument.getPage(pageNum)
+                .then(page => detectPageTitles(page, pageNum))
+                .catch(error => {
+                    console.error(`Error processing page ${pageNum}:`, error);
+                    return [];
                 });
-            }
-        } catch (error) {
-            console.error(`Error processing page ${i}:`, error);
-        }
-    }
-    
-    console.log("Chapter detection complete, found " + detectedChapters.length + " chapters:");
+        })
+    );
+
+    const flat = results.flat();
+    flat.sort((a, b) => a.pageNum - b.pageNum || a.level - b.level);
+    detectedChapters = flat;
+
+    console.log("Chapter detection complete, found " + detectedChapters.length + " entries:");
     console.table(detectedChapters);
     return detectedChapters;
 }
 
-// Optional: Create a function to navigate to chapters
+// Navigate to chapter by index. Relies on window.scheduleRenderPage (set after init).
 function navigateToChapter(chapterIndex) {
     if (detectedChapters.length === 0) {
         console.warn("No chapters detected yet");
         return false;
     }
-    
-    if (chapterIndex >= 0 && chapterIndex < detectedChapters.length) {
-        const pageNum = detectedChapters[chapterIndex].pageNum;
-        console.log(`Navigating to chapter "${detectedChapters[chapterIndex].title}" on page ${pageNum}`);
-        
-        // Assuming you have these functions defined elsewhere
-        if (typeof queueRenderPage === 'function') {
-            queueRenderPage(pageNum);
-            return true;
-        }
+    if (chapterIndex < 0 || chapterIndex >= detectedChapters.length) {
+        console.warn(`Invalid chapter index: ${chapterIndex}`);
+        return false;
     }
-    
-    console.warn(`Invalid chapter index: ${chapterIndex}`);
-    return false;
+    const { pageNum, title } = detectedChapters[chapterIndex];
+    const schedule = typeof window.scheduleRenderPage === 'function' ? window.scheduleRenderPage : null;
+    if (!schedule) {
+        console.warn("Page navigation not ready yet");
+        return false;
+    }
+    console.log(`Navigating to chapter "${title}" on page ${pageNum}`);
+    schedule(pageNum);
+    return true;
 }
 
 // TTS Implementation
@@ -206,11 +253,6 @@ async function initializeAudioContext() {
 }
 
 async function signWithPrivateKey(input, privateKey) {
-    if (!window.crypto || !window.crypto.subtle) {
-        console.warn('Web Crypto API is not available. Falling back to node-forge.');
-        return signWithPrivateKeyFallback(input, privateKey); // Use a fallback library
-    }
-
     try {
         const pemHeader = "-----BEGIN PRIVATE KEY-----";
         const pemFooter = "-----END PRIVATE KEY-----";
@@ -250,15 +292,6 @@ async function signWithPrivateKey(input, privateKey) {
     }
 }
 
-
-// Fallback using node-forge
-function signWithPrivateKeyFallback(input, privateKey) {
-    const privateKeyObj = forge.pki.privateKeyFromPem(privateKey);
-    const md = forge.md.sha256.create();
-    md.update(input, 'utf8');
-    const signature = privateKeyObj.sign(md);
-    return forge.util.encode64(signature);
-}
 // Generate JWT for GCP authentication
 async function generateJWT() {
     const now = Math.floor(Date.now() / 1000);
@@ -288,35 +321,17 @@ async function generateJWT() {
 async function validateStoredToken() {
     const storedToken = localStorage.getItem('gcp_access_token');
     const tokenExpiry = localStorage.getItem('gcp_token_expiry');
-    
-    // Clear tokens if they don't exist or are expired
-    if (!storedToken || !tokenExpiry || Date.now() > parseInt(tokenExpiry)) {
+
+    if (!storedToken || !tokenExpiry) {
         await clearStoredTokens();
         return false;
     }
-    
-    // Test if the token is still valid with a lightweight API call
-    try {
-        const response = await fetch('https://texttospeech.googleapis.com/v1/voices', {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${storedToken}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        if (!response.ok) {
-            console.warn('Stored token is invalid. Clearing and regenerating...');
-            await clearStoredTokens();
-            return false;
-        }
-        
-        return true;
-    } catch (error) {
-        console.error('Error validating token:', error);
+    const expiry = parseInt(tokenExpiry, 10);
+    if (isNaN(expiry) || Date.now() > expiry) {
         await clearStoredTokens();
         return false;
     }
+    return true;
 }
 
 
@@ -364,7 +379,8 @@ async function initializeSynthesizer() {
             await initializeSynthesizer();
         } else {
             console.error('Retry failed. Initialization aborted.');
-            showMessage('Audio features are unavailable right now.', 'red');
+            showMessage('Audio features are unavailable right now.', 'red', 2000);
+            throw error; // Let callers know it actually failed
         }
     } finally {
         initializationAttempted = true;
@@ -373,26 +389,28 @@ async function initializeSynthesizer() {
 }
 
 async function playAudio(text) {
-    showLoading();
+    showAudioLoading();
 
     try {
         if (!audioContext || audioContext.state === 'suspended') {
             showMessage('Please tap anywhere on the page to enable audio playback', 'blue', 3000);
-            hideLoading();
+            hideAudioLoading();
             return;
         }
         if (!isInitialized) {
-            await initializeSynthesizer();
+            await Promise.race([
+                initializeSynthesizer(),
+                timeoutPromise(AUDIO_INIT_TIMEOUT_MS, 'Initialization timed out')
+            ]);
         }
 
         if (isSpeaking && !isPaused) {
-            hideLoading();
+            hideAudioLoading();
             return;
         }
 
         if (audioElement && isPaused) {
             try {
-                showLoading(); // Added this line
                 await audioElement.play();
                 isSpeaking = true;
                 isPaused = false;
@@ -402,23 +420,26 @@ async function playAudio(text) {
                 console.error('Playback failed:', playError);
                 showMessage(`Playback failed: ${playError.message}`, 'red');
                 throw playError;
-            } finally {}
+            }
         } else {
             await synthesizeAudio(text);
         }
     } catch (error) {
         console.error("Error in playAudio:", error);
-        showMessage('Unable to play audio right now. Please try again.', 'red');
+        const msg = error && error.message === 'Initialization timed out'
+            ? 'Failed to initialize audio. Please try again.'
+            : 'Unable to play audio right now. Please try again.';
+        showMessage(msg, 'red', 2000);
         isSpeaking = false;
         isPaused = false;
         updateButtonStates(false);
     } finally {
-        hideLoading();
+        hideAudioLoading();
     }
 }
 
 
-async function synthesizeAudio(text) {
+async function synthesizeAudio(text, isRetry = false) {
     if (!isInitialized) {
         await initializeSynthesizer();
     }
@@ -449,11 +470,14 @@ async function synthesizeAudio(text) {
 
         if (!response.ok) {
             if (response.status === 401 || response.status === 403) {
-                // Clear tokens and reinitialize
                 await clearStoredTokens();
                 isInitialized = false;
                 await initializeSynthesizer();
-                return synthesizeAudio(text); // Retry the synthesis
+                if (isRetry) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || 'Unknown error'}`);
+                }
+                return synthesizeAudio(text, true);
             }
             const errorData = await response.json().catch(() => ({}));
             throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || 'Unknown error'}`);
@@ -551,13 +575,13 @@ async function processPageText(page) {
     const processedText = lines.map(line => {
         let lineText = line.map(item => item.text).join('');
 
-        // Fix common ligature breaks while preserving spaces
+        // Fix common ligature breaks (no word boundaries — mid-word ligatures e.g. "office")
         lineText = lineText
-            .replace(/\bf\s?i\b/g, 'fi') // Preserve preceding spaces
-            .replace(/\bf\s?l\b/g, 'fl')
-            .replace(/\bf\s?f\b/g, 'ff')
-            .replace(/\bt\s?t\b/g, 'tt')
-            .replace(/\bf\s?t\b/g, 'ft')
+            .replace(/f\s?i/g, 'fi')
+            .replace(/f\s?l/g, 'fl')
+            .replace(/f\s?f/g, 'ff')
+            .replace(/t\s?t/g, 'tt')
+            .replace(/f\s?t/g, 'ft')
             .replace(/\s+/g, ' ') // Replace multiple spaces with a single space
             .trim();
 
@@ -591,7 +615,7 @@ function setupAudioEventListeners() {
         isSpeaking = true;
         isPaused = false;
         updateAudioControls();
-        hideLoading();
+        hideAudioLoading();
     });
 
     audioElement.addEventListener('pause', () => {
@@ -603,15 +627,15 @@ function setupAudioEventListeners() {
     });
 
     audioElement.addEventListener('error', (e) => {
-        hideLoading(); // Added this line
+        hideAudioLoading();
         errorHandler(e);
     });
     audioElement.addEventListener('stalled', () => {
-        hideLoading(); // Added this line
+        hideAudioLoading();
         errorHandler(new Error('Audio playback stalled'));
     });
     audioElement.addEventListener('abort', () => {
-        hideLoading(); // Added this line
+        hideAudioLoading();
         errorHandler(new Error('Audio playback aborted'));
     });
 
@@ -620,7 +644,7 @@ function setupAudioEventListeners() {
     });
 
     audioElement.addEventListener('canplaythrough', () => {
-        hideLoading();
+        hideAudioLoading();
     });
 }
 function pauseAudio() {
@@ -683,45 +707,37 @@ document.addEventListener("DOMContentLoaded", async function() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
 
-    // Add a one-time click handler to initialize audio
-    const initAudioHandler = async () => {
-        try {
-            showLoading();
-            await initializeAudioContext();
-            await initializeSynthesizer();
-            document.removeEventListener('click', initAudioHandler);
-            hideLoading();
-        } catch (error) {
-            console.error('Error initializing audio:', error);
-            showMessage('Audio features are unavailable right now. Please refresh the page or try again later.', 'red');
-        }
-    };
-
-    // Listen for the first user interaction
-    document.addEventListener('click', initAudioHandler);
-
     function setupTTSButtons() {
         const playButton = document.getElementById('play-audio');
         const pauseButton = document.getElementById('pause-audio');
         const stopButton = document.getElementById('stop-audio');
-        setTimeout(function() {
-            createSpeedSlider();
-        }, 500);
-        
+        createSpeedSlider();
+
         if (playButton) {
-            // New code
             playButton.addEventListener('click', async () => {
                 if (!audioContext) {
+                    showAudioLoading();
                     try {
-                        await initializeAudioContext();
-                        await initializeSynthesizer();
+                        await Promise.race([
+                            (async () => {
+                                await initializeAudioContext();
+                                await initializeSynthesizer();
+                            })(),
+                            timeoutPromise(AUDIO_INIT_TIMEOUT_MS, 'Initialization timed out')
+                        ]);
                     } catch (error) {
                         console.error('Failed to initialize audio:', error);
-                        showMessage('Audio features are unavailable right now. Please refresh the page or try again later.', 'red');
+                        const msg = error && error.message === 'Initialization timed out'
+                            ? 'Failed to initialize audio. Please try again.'
+                            : 'Audio features are unavailable right now. Please refresh the page or try again later.';
+                        showMessage(msg, 'red', 2000);
+                        hideAudioLoading();
                         return;
+                    } finally {
+                        hideAudioLoading();
                     }
                 }
-                
+
                 if (currentPageText) {
                     playAudio(currentPageText);
                 }
@@ -828,13 +844,15 @@ document.addEventListener("DOMContentLoaded", async function() {
         }
     }
 
-    function queueRenderPage(num) {
+    // Single-slot buffer: only one pending page; rapid nav drops intermediate requests.
+    function scheduleRenderPage(num) {
         if (pageRendering) {
             pageNumPending = num;
         } else {
             renderPage(num);
         }
     }
+    window.scheduleRenderPage = scheduleRenderPage;
 
     function changePage(offset) {
         const newPage = currentPage + offset;
@@ -842,7 +860,7 @@ document.addEventListener("DOMContentLoaded", async function() {
             if (window.TTS) {
                 window.TTS.stopAudio();
             }
-            queueRenderPage(newPage);
+            scheduleRenderPage(newPage);
         }
     }
     function updateUI() {
@@ -860,7 +878,7 @@ document.addEventListener("DOMContentLoaded", async function() {
             if (window.TTS) {
                 window.TTS.stopAudio();
             }
-            queueRenderPage(pageNum);
+            scheduleRenderPage(pageNum);
         }
     });
 
@@ -871,19 +889,22 @@ document.addEventListener("DOMContentLoaded", async function() {
             setupTTSButtons(); // Set up buttons first
             await loadPDF('Abidogun.pdf'); // Load PDF immediately
             
-            // Add click handler for audio initialization
+            // Add click handler for audio initialization (only one listener — registered here after init)
             const initAudioHandler = async () => {
+                showAudioLoading();
                 try {
                     await initializeAudioContext();
                     await initializeSynthesizer();
                     document.removeEventListener('click', initAudioHandler);
                 } catch (error) {
                     console.error('Error initializing audio:', error);
-                    showMessage('Failed to initialize audio system. Please refresh and try again.', 'red');
+                    document.removeEventListener('click', initAudioHandler);
+                    // showMessage already called inside initializeSynthesizer
+                } finally {
+                    hideAudioLoading();
                 }
             };
-            
-            // Listen for first user interaction
+
             document.addEventListener('click', initAudioHandler);
             
             hideLoading();
@@ -899,9 +920,8 @@ document.addEventListener("DOMContentLoaded", async function() {
 });
 
 
-// Expose TTS functions
+// Expose TTS playback/control only. Do not expose initializeSynthesizer — it mutates shared state.
 window.TTS = {
-    initializeSynthesizer,
     playAudio,
     pauseAudio,
     stopAudio,

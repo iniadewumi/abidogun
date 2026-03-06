@@ -40,6 +40,31 @@ html, body {
     background-color: #f0ead6;
 }
 
+/* Audio loading progress line (above control container, non-blocking) */
+.audio-loading-progress {
+    height: 3px;
+    width: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        #3498db 20%,
+        #3498db 40%,
+        transparent 60%,
+        transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: audio-loading-slide 1.2s ease-in-out infinite;
+}
+
+.audio-loading-progress.hidden {
+    display: none;
+}
+
+@keyframes audio-loading-slide {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
 /* Controls */
 #controls-wrapper {
     position: fixed;
@@ -142,6 +167,12 @@ button:disabled {
     border: 1px solid #f5c6cb;
 }
 
+.blue {
+    background-color: #cce5ff;
+    color: #004085;
+    border: 1px solid #b8daff;
+}
+
 .loading-overlay {
     position: fixed;
     top: 0;
@@ -196,6 +227,7 @@ button:disabled {
     background-color: rgba(0, 0, 0, 0.9);
 }
 
+/* Single definition: animate left only (no display toggle — display can't be transitioned). */
 .chapter-sidebar {
     position: fixed;
     top: 0;
@@ -203,7 +235,7 @@ button:disabled {
     width: 280px;
     height: 100%;
     background-color: #1e293b;
-    color: white;
+    color: #ecf0f1;
     box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
     transition: left 0.3s ease;
     z-index: 100;
@@ -268,6 +300,12 @@ button:disabled {
 
 .chapter-item:hover {
     background-color: #2c3e50;
+}
+
+.chapter-item-sub {
+    padding-left: 24px;
+    font-size: 13px;
+    font-weight: 500;
 }
 
 .chapter-item.active {
@@ -337,9 +375,13 @@ body.sidebar-open {
     .chapter-sidebar {
         width: 85%;
         max-width: 320px;
+        left: -100%; /* Fully off-screen when closed so transition animates correctly */
     }
-    
-    
+
+    .chapter-sidebar.open {
+        left: 0;
+    }
+
     /* Audio controls mobile optimization */
     #controls-wrapper {
         height: auto; /* Allow height to adapt to content */
@@ -417,73 +459,4 @@ body.sidebar-open {
     .chapters-container {
         -webkit-overflow-scrolling: touch;
     }
-}
-
-/* Sidebar Fix */
-
-/* Base sidebar styling */
-.chapter-sidebar {
-    position: fixed;
-    top: 0;
-    left: -100%; /* Move completely off-screen when closed */
-    width: 280px;
-    height: 100%;
-    background-color: #1e293b;
-    color: #ecf0f1;
-    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
-    transition: left 0.3s ease;
-    z-index: 100;
-}
-
-/* When open, move on-screen */
-.chapter-sidebar.open {
-    left: 0;
-}
-
-/* Mobile-specific adjustments */
-@media (max-width: 767px) {
-    .chapter-sidebar {
-        width: 85%; /* Wider for mobile */
-        max-width: 320px;
-    }
-    
-    /* Toggle button for sidebar */
-    .sidebar-toggle {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        width: 40px;
-        height: 40px;
-        background-color: rgba(0, 0, 0, 0.7);
-        color: white;
-        border: none;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        z-index: 101; /* Ensure above the sidebar */
-    }
-    
-    /* Making sure dark overlay works properly */
-    .sidebar-overlay {
-        z-index: 99; /* Below the sidebar but above content */
-    }
-    
-    /* Adjust PDF container to not be affected by sidebar */
-    #pdf-container {
-        left: 0 !important; /* Override any sidebar influence */
-        width: 100% !important;
-    }
-}
-
-/* Fix for narrow strip issue */
-body:not(.sidebar-open) .chapter-sidebar {
-    display: none; /* Completely hide when not open on narrow screens */
-}
-
-/* Show when explicitly opened */
-body.sidebar-open .chapter-sidebar {
-    display: block;
-    left: 0;
 }
