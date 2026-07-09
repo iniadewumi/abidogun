@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
+    "download:kokoro": "node scripts/download-kokoro-model.mjs",
+    "build": "npm run download:kokoro",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

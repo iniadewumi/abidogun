@@ -74,6 +74,7 @@ html, body {
     background-color: #2c3e50;
     border-top: 1px solid #34495e;
     z-index: 1000;
+    overflow: visible;
     touch-action: none;
     -webkit-touch-callout: none;
     -webkit-user-select: none;
@@ -87,6 +88,7 @@ html, body {
     align-items: center;
     border-bottom: 1px solid #34495e;
     padding: 0 5px;
+    overflow: visible;
 }
 
 #page-controls {
@@ -336,6 +338,112 @@ body.sidebar-open {
     overflow: hidden;
 }
 
+/* Voice engine picker (custom dropdown — avoids native OS select chrome) */
+.engine-control {
+    display: flex;
+    align-items: center;
+    margin-left: 10px;
+    white-space: nowrap;
+    position: relative;
+    z-index: 20;
+}
+
+.engine-label {
+    margin-right: 6px;
+    font-size: 12px;
+    color: #ecf0f1;
+}
+
+.engine-dropdown {
+    position: relative;
+}
+
+.engine-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 118px;
+    height: 28px;
+    padding: 0 10px;
+    background-color: #34495e;
+    color: #ecf0f1;
+    border: 1px solid #4a6278;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.engine-trigger:hover {
+    background-color: #3d566e;
+}
+
+.engine-trigger:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.engine-trigger-text {
+    flex: 1;
+    text-align: left;
+}
+
+.engine-trigger-caret {
+    font-size: 9px;
+    opacity: 0.75;
+    transition: transform 0.15s ease;
+}
+
+.engine-dropdown.open .engine-trigger-caret {
+    transform: rotate(180deg);
+}
+
+.engine-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    min-width: 100%;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background-color: #2c3e50;
+    border: 1px solid #4a6278;
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+    z-index: 30;
+}
+
+.engine-menu[hidden] {
+    display: none;
+}
+
+.engine-option {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    margin: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #ecf0f1;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.engine-option:hover {
+    background-color: #34495e;
+}
+
+.engine-option.selected {
+    background-color: #3498db;
+    color: #fff;
+}
+
+.engine-option.selected:hover {
+    background-color: #2980b9;
+}
+
 /* Speed Control */
 .speed-control {
     display: flex;
@@ -406,11 +514,26 @@ body.sidebar-open {
         justify-content: center;
     }
     
+    .engine-control,
     .speed-control {
         width: 100%;
         margin: 5px 0;
         justify-content: center;
         padding: 5px 0;
+    }
+
+    .engine-dropdown {
+        flex: 1;
+    }
+
+    .engine-trigger {
+        width: 100%;
+        min-height: 36px;
+        height: 36px;
+    }
+
+    .engine-menu {
+        min-width: 100%;
     }
     
     #speed-slider {

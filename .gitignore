@@ -26,3 +26,6 @@ yarn-error.log
 *.log
 # *.pdf
 env.*
+
+# Self-hosted Kokoro weights (downloaded by npm run download:kokoro / CI)
+dist/models/Kokoro-82M-v1.0-ONNX/

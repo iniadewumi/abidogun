@@ -1,21 +1,6 @@
 //main.js
 
 
-// Helper: binary string (e.g. atob output) → ArrayBuffer. For UTF-8 text use TextEncoder.
-function str2ab(str) {
-    const buf = new ArrayBuffer(str.length);
-    const bufView = new Uint8Array(buf);
-    for (let i = 0, strLen = str.length; i < strLen; i++) {
-        bufView[i] = str.charCodeAt(i) & 0xff;
-    }
-    return buf;
-}
-
-async function clearStoredTokens() {
-    localStorage.removeItem('gcp_access_token');
-    localStorage.removeItem('gcp_token_expiry');
-}
-
 function showLoading() {
     document.getElementById('loading-overlay').classList.remove('hidden');
 }
@@ -23,8 +8,6 @@ function showLoading() {
 function hideLoading() {
     document.getElementById('loading-overlay').classList.add('hidden');
 }
-
-const AUDIO_INIT_TIMEOUT_MS = 10000;
 
 function showAudioLoading() {
     const el = document.getElementById('audio-loading-progress');
@@ -40,12 +23,6 @@ function hideAudioLoading() {
         el.classList.add('hidden');
         el.setAttribute('aria-hidden', 'true');
     }
-}
-
-function timeoutPromise(ms, message) {
-    return new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(message)), ms);
-    });
 }
 
 let messageHideTimeoutId = null;
@@ -160,375 +137,608 @@ function navigateToChapter(chapterIndex) {
     return true;
 }
 
-// TTS Implementation
-let audioContext = null;
-let audioElement = null;
-let audioData = null;
-let isInitialized = false;
+// TTS Implementation — Browser Web Speech API + optional Kokoro neural voice
+const TTS_ENGINE_BROWSER = 'browser';
+const TTS_ENGINE_KOKORO = 'kokoro';
+const KOKORO_VOICE = 'af_heart';
+
 let isSpeaking = false;
 let isPaused = false;
-let initializationAttempted = false;
-let speakingRate = 1; 
+let speakingRate = 1;
+let selectedVoice = null;
+let ttsEngine = localStorage.getItem('ttsEngine') || TTS_ENGINE_BROWSER;
+// Chrome GC's unreferenced utterances mid-queue, killing their event handlers
+let activeUtterances = [];
+
+// Kokoro state
+let kokoroTTS = null;
+let kokoroLoadPromise = null;
+let kokoroAudio = null;
+let kokoroObjectUrl = null;
+let kokoroGenerationId = 0;
+let kokoroContinuePlayback = null;
+
+function createEnginePicker() {
+    const audioControls = document.getElementById('audio-controls');
+    if (!audioControls || document.getElementById('engine-control')) return;
+
+    const options = [
+        { value: TTS_ENGINE_BROWSER, label: 'Browser' },
+        { value: TTS_ENGINE_KOKORO, label: 'Kokoro (HQ)' },
+    ];
+    const current = options.find((o) => o.value === ttsEngine) || options[0];
+
+    const engineControl = document.createElement('div');
+    engineControl.id = 'engine-control';
+    engineControl.className = 'engine-control';
+
+    const label = document.createElement('span');
+    label.className = 'engine-label';
+    label.textContent = 'Voice:';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'engine-dropdown';
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.id = 'tts-engine';
+    trigger.className = 'engine-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-label', 'Text-to-speech voice engine');
+
+    const triggerText = document.createElement('span');
+    triggerText.className = 'engine-trigger-text';
+    triggerText.textContent = current.label;
+
+    const triggerCaret = document.createElement('span');
+    triggerCaret.className = 'engine-trigger-caret';
+    triggerCaret.setAttribute('aria-hidden', 'true');
+    triggerCaret.innerHTML = '<i class="fas fa-chevron-down"></i>';
+
+    trigger.appendChild(triggerText);
+    trigger.appendChild(triggerCaret);
+
+    const menu = document.createElement('ul');
+    menu.className = 'engine-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.hidden = true;
+
+    function setOpen(open) {
+        menu.hidden = !open;
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        dropdown.classList.toggle('open', open);
+    }
+
+    function selectEngine(next, nextLabel) {
+        if (next === ttsEngine) {
+            setOpen(false);
+            return;
+        }
+        stopAudio();
+        ttsEngine = next;
+        localStorage.setItem('ttsEngine', ttsEngine);
+        triggerText.textContent = nextLabel;
+        menu.querySelectorAll('.engine-option').forEach((btn) => {
+            const selected = btn.dataset.value === next;
+            btn.classList.toggle('selected', selected);
+            btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        setOpen(false);
+        if (ttsEngine === TTS_ENGINE_KOKORO) {
+            showMessage('High-quality voice selected. First play loads the model from this site (~90MB, then cached).', 'blue', 4000);
+        } else {
+            showMessage('Browser voice selected.', 'blue', 2000);
+        }
+    }
+
+    options.forEach((opt) => {
+        const item = document.createElement('li');
+        item.setAttribute('role', 'presentation');
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'engine-option' + (opt.value === current.value ? ' selected' : '');
+        btn.dataset.value = opt.value;
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', opt.value === current.value ? 'true' : 'false');
+        btn.textContent = opt.label;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectEngine(opt.value, opt.label);
+        });
+
+        item.appendChild(btn);
+        menu.appendChild(item);
+    });
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(menu.hidden);
+    });
+
+    document.addEventListener('click', () => setOpen(false));
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setOpen(false);
+    });
+
+    dropdown.appendChild(trigger);
+    dropdown.appendChild(menu);
+    engineControl.appendChild(label);
+    engineControl.appendChild(dropdown);
+    audioControls.appendChild(engineControl);
+}
 
 function createSpeedSlider() {
-    // Find the audio controls container
     const audioControls = document.getElementById('audio-controls');
-    if (!audioControls) return;
-    
-    // Create a container for the speed control
+    if (!audioControls || document.getElementById('speed-control')) return;
+
     const speedControl = document.createElement('div');
     speedControl.id = 'speed-control';
     speedControl.className = 'speed-control';
-    
-    // Create label
+
     const label = document.createElement('label');
     label.htmlFor = 'speed-slider';
     label.textContent = 'Speed:';
-    
-    // Create speed value display
+
     const speedValue = document.createElement('span');
     speedValue.id = 'speed-value';
     speedValue.textContent = '1x';
-    
-    // Create slider
+
     const slider = document.createElement('input');
     slider.type = 'range';
     slider.id = 'speed-slider';
     slider.min = '0.5';
     slider.max = '2';
     slider.step = '0.1';
-    slider.value = '1';  // Match the default value
-    
-    // Add event listener to update speed value and store in localStorage
+    slider.value = '0.85';
+
     slider.addEventListener('input', function() {
         const newRate = parseFloat(this.value);
         speakingRate = newRate;
-        
-        // Update displayed value (rounded to 1 decimal place)
         const displayValue = Math.round(newRate * 10) / 10;
         speedValue.textContent = displayValue + 'x';
-        
-        // Store in localStorage for persistence
         localStorage.setItem('narrationSpeed', newRate);
     });
-    
-    // Assemble the control
+
     speedControl.appendChild(label);
     speedControl.appendChild(slider);
     speedControl.appendChild(speedValue);
-    
-    // Add to audio controls
     audioControls.appendChild(speedControl);
-    
-    // Load saved speed if available
+
     const savedSpeed = localStorage.getItem('narrationSpeed');
     if (savedSpeed) {
         slider.value = savedSpeed;
         speakingRate = parseFloat(savedSpeed);
         const displayValue = Math.round(speakingRate * 10) / 10;
         speedValue.textContent = displayValue + 'x';
+    } else {
+        speakingRate = parseFloat(slider.value);
+        speedValue.textContent = speakingRate + 'x';
     }
 }
 
-//Clear token
-let hasRetried = false; // Tracks if retry has occurred
-
-
-async function initializeAudioContext() {
-    try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (!audioContext) {
-            audioContext = new AudioContext();
-        }
-        
-        // Mobile browsers often require user interaction to start audio context
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-        }
-        
-        return audioContext;
-    } catch (error) {
-        console.error('Audio Context initialization failed:', error);
-        showMessage('Audio initialization failed. Please check if audio is enabled on your device.', 'red');
-        throw error;
-    }
+function ttsSupported() {
+    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
 }
 
-async function signWithPrivateKey(input, privateKey) {
-    try {
-        const pemHeader = "-----BEGIN PRIVATE KEY-----";
-        const pemFooter = "-----END PRIVATE KEY-----";
-        const pemContents = privateKey.substring(
-            privateKey.indexOf(pemHeader) + pemHeader.length,
-            privateKey.indexOf(pemFooter)
-        ).replace(/\s/g, '');
-        
-        const binaryDer = window.atob(pemContents);
-        const derBuffer = str2ab(binaryDer);
-        
-        const cryptoKey = await crypto.subtle.importKey(
-            'pkcs8',
-            derBuffer,
-            {
-                name: 'RSASSA-PKCS1-v1_5',
-                hash: { name: 'SHA-256' },
-            },
-            false,
-            ['sign']
-        );
-        
-        const textEncoder = new TextEncoder();
-        const inputBuffer = textEncoder.encode(input);
-        const signature = await crypto.subtle.sign(
-            'RSASSA-PKCS1-v1_5',
-            cryptoKey,
-            inputBuffer
-        );
-        
-        const signatureArray = new Uint8Array(signature);
-        const signatureBase64 = btoa(String.fromCharCode.apply(null, signatureArray));
-        return signatureBase64;
-    } catch (error) {
-        console.error('Error signing JWT:', error);
-        throw error;
-    }
+function anyTtsAvailable() {
+    return ttsSupported() || typeof window.loadKokoroTTS === 'function';
 }
 
-// Generate JWT for GCP authentication
-async function generateJWT() {
-    const now = Math.floor(Date.now() / 1000);
-    const exp = now + 3600;
-
-    const header = {
-        alg: 'RS256',
-        typ: 'JWT'
-    };
-
-    const payload = {
-        iss: window.ENV.GCP_CLIENT_EMAIL,
-        scope: 'https://www.googleapis.com/auth/cloud-platform',
-        aud: 'https://oauth2.googleapis.com/token',
-        exp: exp,
-        iat: now
-    };
-
-    const encodedHeader = btoa(JSON.stringify(header));
-    const encodedPayload = btoa(JSON.stringify(payload));
-    const signatureInput = `${encodedHeader}.${encodedPayload}`;
-    
-    const signature = await signWithPrivateKey(signatureInput, window.ENV.GCP_PRIVATE_KEY);
-    return `${encodedHeader}.${encodedPayload}.${signature}`;
+function pickVoice() {
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+    return voices.find(v => v.lang.startsWith('en') && v.localService)
+        || voices.find(v => v.lang.startsWith('en'))
+        || voices[0];
 }
 
-async function validateStoredToken() {
-    const storedToken = localStorage.getItem('gcp_access_token');
-    const tokenExpiry = localStorage.getItem('gcp_token_expiry');
-
-    if (!storedToken || !tokenExpiry) {
-        await clearStoredTokens();
-        return false;
-    }
-    const expiry = parseInt(tokenExpiry, 10);
-    if (isNaN(expiry) || Date.now() > expiry) {
-        await clearStoredTokens();
-        return false;
-    }
-    return true;
-}
-
-
-
-
-async function initializeSynthesizer() {
-    if (isInitialized) return;
-    
-    try {
-        // Initialize audio context first
-        await initializeAudioContext();
-        
-        // Check if we have a valid stored token
-        const isTokenValid = await validateStoredToken();
-        
-        if (!isTokenValid) {
-            const jwt = await generateJWT();
-            const response = await fetch('https://oauth2.googleapis.com/token', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                    assertion: jwt
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error('Token fetch failed: ' + response.statusText);
-            }
-
-            const data = await response.json();
-            localStorage.setItem('gcp_access_token', data.access_token);
-            localStorage.setItem('gcp_token_expiry', Date.now() + (data.expires_in * 1000));
-        }
-        
-        isInitialized = true;
-    } catch (error) {
-        console.error('TTS Init Error:', error);
-        if (!hasRetried) {
-            console.warn('Retrying initialization...');
-            hasRetried = true; // Mark the retry as done
-            await clearStoredTokens(); // Clear tokens and retry
-            await initializeSynthesizer();
+// Split text into sentence-sized utterances. Long single utterances get cut off
+// in Chrome (~15s limit on remote voices); a queue of short ones avoids that.
+function splitIntoChunks(text, maxLen = 200) {
+    const sentences = text.replace(/\n+/g, ' ').match(/[^.!?]+[.!?]*\s*/g) || [text];
+    const chunks = [];
+    let current = '';
+    for (const sentence of sentences) {
+        if (current && (current + sentence).length > maxLen) {
+            chunks.push(current.trim());
+            current = sentence;
         } else {
-            console.error('Retry failed. Initialization aborted.');
-            showMessage('Audio features are unavailable right now.', 'red', 2000);
-            throw error; // Let callers know it actually failed
+            current += sentence;
         }
-    } finally {
-        initializationAttempted = true;
-        updateButtonStates(false);
+    }
+    if (current.trim()) chunks.push(current.trim());
+    return chunks;
+}
+
+function revokeKokoroObjectUrl() {
+    if (kokoroObjectUrl) {
+        URL.revokeObjectURL(kokoroObjectUrl);
+        kokoroObjectUrl = null;
     }
 }
 
-async function playAudio(text) {
+function stopKokoroAudio() {
+    kokoroGenerationId += 1;
+    kokoroContinuePlayback = null;
+    if (window.__kokoroWorkerApi) {
+        window.__kokoroWorkerApi.cancel(kokoroGenerationId);
+    }
+    if (kokoroAudio) {
+        kokoroAudio.onended = null;
+        kokoroAudio.onerror = null;
+        kokoroAudio.pause();
+        kokoroAudio.removeAttribute('src');
+        kokoroAudio.load();
+        kokoroAudio = null;
+    }
+    revokeKokoroObjectUrl();
+    if (Array.isArray(window.__kokoroQueuedUrls)) {
+        window.__kokoroQueuedUrls.forEach((url) => {
+            try { URL.revokeObjectURL(url); } catch (_) {}
+        });
+        window.__kokoroQueuedUrls = [];
+    }
+}
+
+async function ensureKokoroReady() {
+    if (kokoroTTS) return kokoroTTS;
+    if (kokoroLoadPromise) return kokoroLoadPromise;
+
+    if (typeof window.loadKokoroTTS !== 'function') {
+        throw new Error('Kokoro loader is not available');
+    }
+
+    showMessage('Loading high-quality voice model from this site…', 'blue', 8000);
+    kokoroLoadPromise = window.loadKokoroTTS((progress) => {
+        if (!progress || typeof progress.progress !== 'number') return;
+        if (progress.status === 'progress' && progress.progress < 100) {
+            const pct = Math.round(progress.progress);
+            showMessage(`Downloading voice model… ${pct}%`, 'blue', 3000);
+        }
+    }).then((api) => {
+        kokoroTTS = api;
+        showMessage('High-quality voice ready.', 'green', 2500);
+        return api;
+    }).catch((err) => {
+        kokoroLoadPromise = null;
+        throw err;
+    });
+
+    return kokoroLoadPromise;
+}
+
+function playBrowserAudio(text) {
+    if (!ttsSupported()) {
+        showMessage('Browser text-to-speech is not supported here.', 'red');
+        return;
+    }
+
+    if (isSpeaking && !isPaused) return;
+
+    if (isPaused) {
+        window.speechSynthesis.resume();
+        isSpeaking = true;
+        isPaused = false;
+        updateAudioControls();
+        showMessage('Audio playing...', 'green');
+        return;
+    }
+
+    if (!text) return;
+
     showAudioLoading();
+    window.speechSynthesis.cancel();
+    activeUtterances = [];
+    if (!selectedVoice) selectedVoice = pickVoice();
 
-    try {
-        if (!audioContext || audioContext.state === 'suspended') {
-            showMessage('Please tap anywhere on the page to enable audio playback', 'blue', 3000);
+    const chunks = splitIntoChunks(text);
+    chunks.forEach((chunk, index) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        activeUtterances.push(utterance);
+        utterance.rate = speakingRate;
+        if (selectedVoice) utterance.voice = selectedVoice;
+
+        if (index === 0) {
+            utterance.onstart = hideAudioLoading;
+        }
+        if (index === chunks.length - 1) {
+            utterance.onend = () => {
+                activeUtterances = [];
+                isSpeaking = false;
+                isPaused = false;
+                updateAudioControls();
+            };
+        }
+        utterance.onerror = (event) => {
+            // cancel()/page-change interruptions fire onerror too — not real failures
+            if (event.error === 'canceled' || event.error === 'interrupted') return;
+            console.error('Speech synthesis error:', event.error);
             hideAudioLoading();
+            showMessage('Unable to play audio right now. Please try again.', 'red', 2000);
+            isSpeaking = false;
+            isPaused = false;
+            updateAudioControls();
+        };
+
+        window.speechSynthesis.speak(utterance);
+    });
+
+    // speak() begins playback right away; onstart is unreliable (GC/engine quirks),
+    // so reflect the playing state immediately rather than waiting for it
+    setTimeout(hideAudioLoading, 2000);
+    isSpeaking = true;
+    isPaused = false;
+    updateAudioControls();
+    showMessage('Audio playing...', 'green');
+}
+
+function sanitizeForKokoro(text) {
+    if (!text) return '';
+    return text
+        // Drop control chars / private-use PDF junk that can confuse the phonemizer
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, ' ')
+        .replace(/[\uE000-\uF8FF]/g, ' ')
+        // Normalize fancy punctuation to ASCII-ish forms Kokoro handles well
+        .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+        .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+}
+
+/** Split page text into ~4 quarters at paragraph boundaries for pipelined synthesis. */
+function splitPageIntoQuarters(rawText) {
+    const paragraphs = String(rawText || '')
+        .split(/\n+/)
+        .map((p) => sanitizeForKokoro(p))
+        .filter(Boolean);
+
+    if (!paragraphs.length) return [];
+    if (paragraphs.length === 1) return paragraphs;
+
+    const totalLen = paragraphs.reduce((sum, p) => sum + p.length, 0);
+    const target = Math.max(1, Math.ceil(totalLen / 4));
+    const quarters = [];
+    let bucket = [];
+    let bucketLen = 0;
+
+    for (const paragraph of paragraphs) {
+        // Fill up to 3 quarters by target length; leftover becomes the last
+        if (bucket.length && bucketLen + paragraph.length > target && quarters.length < 3) {
+            quarters.push(bucket.join(' '));
+            bucket = [paragraph];
+            bucketLen = paragraph.length;
+        } else {
+            bucket.push(paragraph);
+            bucketLen += paragraph.length;
+        }
+    }
+    if (bucket.length) quarters.push(bucket.join(' '));
+    return quarters;
+}
+
+function concatFloat32(chunks) {
+    const total = chunks.reduce((sum, c) => sum + c.length, 0);
+    const out = new Float32Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return out;
+}
+
+function makeSilenceSamples(durationMs, sampleRate = 24000) {
+    return new Float32Array(Math.max(1, Math.floor((sampleRate * durationMs) / 1000)));
+}
+
+async function playKokoroAudio(text) {
+    if (isSpeaking && !isPaused) return;
+
+    if (isPaused) {
+        try {
+            isPaused = false;
+            if (kokoroAudio && !kokoroAudio.ended) {
+                await kokoroAudio.play();
+            } else if (typeof kokoroContinuePlayback === 'function') {
+                kokoroContinuePlayback();
+            }
+            isSpeaking = true;
+            updateAudioControls();
+            showMessage('Audio playing...', 'green');
+        } catch (err) {
+            console.error('Kokoro resume failed:', err);
+            isPaused = true;
+            showMessage('Unable to resume audio. Please try again.', 'red', 2000);
+        }
+        return;
+    }
+
+    if (!text) return;
+    const quarters = splitPageIntoQuarters(text);
+    if (!quarters.length) {
+        showMessage('No readable text on this page.', 'red', 2000);
+        return;
+    }
+
+    const generationId = ++kokoroGenerationId;
+    showAudioLoading();
+    const playButton = document.getElementById('play-audio');
+    const pauseButton = document.getElementById('pause-audio');
+    const stopButton = document.getElementById('stop-audio');
+    if (playButton) playButton.disabled = true;
+    if (pauseButton) pauseButton.disabled = true;
+    if (stopButton) stopButton.disabled = false;
+
+    const queuedUrls = [];
+    window.__kokoroQueuedUrls = queuedUrls;
+    const audioQueue = [];
+    let generating = true;
+    let startedPlayback = false;
+    const SECTION_PAUSE_MS = 280;
+
+    const finishIfIdle = () => {
+        if (generationId !== kokoroGenerationId) return;
+        if (!generating && audioQueue.length === 0 && (!kokoroAudio || kokoroAudio.paused)) {
+            isSpeaking = false;
+            isPaused = false;
+            hideAudioLoading();
+            updateAudioControls();
+        }
+    };
+
+    const playNextChunk = async () => {
+        if (generationId !== kokoroGenerationId) return;
+        if (isPaused) return;
+        if (kokoroAudio && !kokoroAudio.paused && !kokoroAudio.ended) return;
+        if (!audioQueue.length) {
+            finishIfIdle();
             return;
         }
-        if (!isInitialized) {
-            await Promise.race([
-                initializeSynthesizer(),
-                timeoutPromise(AUDIO_INIT_TIMEOUT_MS, 'Initialization timed out')
-            ]);
-        }
 
-        if (isSpeaking && !isPaused) {
-            hideAudioLoading();
-            return;
-        }
+        const url = audioQueue.shift();
+        revokeKokoroObjectUrl();
+        kokoroObjectUrl = url;
 
-        if (audioElement && isPaused) {
-            try {
-                await audioElement.play();
+        kokoroAudio = new Audio(url);
+        kokoroAudio.onended = () => {
+            if (generationId !== kokoroGenerationId) return;
+            playNextChunk();
+        };
+        kokoroAudio.onerror = () => {
+            if (generationId !== kokoroGenerationId) return;
+            console.error('Kokoro chunk playback error');
+            playNextChunk();
+        };
+
+        try {
+            await kokoroAudio.play();
+            if (!startedPlayback) {
+                startedPlayback = true;
+                hideAudioLoading();
                 isSpeaking = true;
                 isPaused = false;
                 updateAudioControls();
                 showMessage('Audio playing...', 'green');
-            } catch (playError) {
-                console.error('Playback failed:', playError);
-                showMessage(`Playback failed: ${playError.message}`, 'red');
-                throw playError;
             }
-        } else {
-            await synthesizeAudio(text);
-        }
-    } catch (error) {
-        console.error("Error in playAudio:", error);
-        const msg = error && error.message === 'Initialization timed out'
-            ? 'Failed to initialize audio. Please try again.'
-            : 'Unable to play audio right now. Please try again.';
-        showMessage(msg, 'red', 2000);
-        isSpeaking = false;
-        isPaused = false;
-        updateButtonStates(false);
-    } finally {
-        hideAudioLoading();
-    }
-}
-
-
-async function synthesizeAudio(text, isRetry = false) {
-    if (!isInitialized) {
-        await initializeSynthesizer();
-    }
-    updateButtonStates(true);
-
-    try {
-        const response = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('gcp_access_token')}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                input: {
-                    text: text
-                },
-                voice: {
-                    languageCode: 'en-US',
-                    name: 'en-US-Neural2-F'
-                },
-                audioConfig: {
-                    audioEncoding: 'MP3',
-                    pitch: 0,        
-                    speakingRate: speakingRate 
-                }
-            })
-        });
-
-        if (!response.ok) {
-            if (response.status === 401 || response.status === 403) {
-                await clearStoredTokens();
-                isInitialized = false;
-                await initializeSynthesizer();
-                if (isRetry) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || 'Unknown error'}`);
-                }
-                return synthesizeAudio(text, true);
-            }
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error?.message || 'Unknown error'}`);
-        }
-
-        const result = await response.json();
-        if (!result.audioContent) {
-            throw new Error('No audio content received from server');
-        }
-
-        const audioContent = result.audioContent;
-        const binaryString = window.atob(audioContent);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
-
-        const blob = new Blob([bytes], { type: 'audio/mpeg' });
-        const url = URL.createObjectURL(blob);
-
-        if (audioElement) {
-            audioElement.pause();
-            audioElement.remove();
-        }
-
-        audioElement = new Audio(url);
-        setupAudioEventListeners();
-        
-        try {
-            await audioElement.play();
-            isSpeaking = true;
+        } catch (err) {
+            if (generationId !== kokoroGenerationId) return;
+            console.error('Kokoro play failed:', err);
+            hideAudioLoading();
+            isSpeaking = false;
             isPaused = false;
             updateAudioControls();
-            showMessage('Audio playing...', 'green');
-        } catch (playError) {
-            console.error('Playback failed:', playError);
-            showMessage(`Playback failed: ${playError.message}`, 'red');
-            throw playError;
+            showMessage('Unable to play audio right now. Please try again.', 'red', 2000);
         }
-        
-        audioData = bytes;
-    } catch (error) {
-        console.error('Error synthesizing speech:', error);
-        showMessage(`Speech synthesis failed: ${error.message}`, 'red');
+    };
+    kokoroContinuePlayback = playNextChunk;
+
+    const enqueueMerged = (samples, sampleRate) => {
+        const wavBuffer = float32ToWav(samples, sampleRate || 24000);
+        const url = URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
+        queuedUrls.push(url);
+        audioQueue.push(url);
+        if (!startedPlayback || (kokoroAudio && kokoroAudio.paused && !isPaused)) {
+            playNextChunk();
+        }
+    };
+
+    try {
+        const api = await ensureKokoroReady();
+        if (generationId !== kokoroGenerationId) return;
+
+        showMessage('Generating narration…', 'blue', 8000);
+
+        // One continuous Audio clip per quarter (no mid-section gaps).
+        // While quarter N plays, we generate quarter N+1.
+        for (let i = 0; i < quarters.length; i++) {
+            if (generationId !== kokoroGenerationId) return;
+
+            const parts = [];
+            let sampleRate = 24000;
+            await api.synthesize(quarters[i], {
+                voice: KOKORO_VOICE,
+                speed: speakingRate,
+                generationId,
+                onChunk: (samples, rate, chunkGenerationId) => {
+                    if (chunkGenerationId !== kokoroGenerationId) return;
+                    if (!samples || !samples.length) return;
+                    parts.push(samples instanceof Float32Array ? samples : Float32Array.from(samples));
+                    if (rate) sampleRate = rate;
+                },
+            });
+            if (generationId !== kokoroGenerationId) return;
+            if (!parts.length) continue;
+
+            let samples = concatFloat32(parts);
+            if (i > 0) {
+                samples = concatFloat32([
+                    makeSilenceSamples(SECTION_PAUSE_MS, sampleRate),
+                    samples,
+                ]);
+            }
+            enqueueMerged(samples, sampleRate);
+        }
+
+        generating = false;
+        if (generationId !== kokoroGenerationId) return;
+        if (!startedPlayback && audioQueue.length === 0) {
+            throw new Error('No audio generated');
+        }
+        finishIfIdle();
+    } catch (err) {
+        if (generationId !== kokoroGenerationId) return;
+        console.error('Kokoro TTS error:', err);
+        generating = false;
+        hideAudioLoading();
         isSpeaking = false;
         isPaused = false;
         updateAudioControls();
-        throw error;
+        showMessage('High-quality voice failed to load. Try Browser voice, or retry.', 'red', 4000);
     }
+}
+
+function float32ToWav(samples, sampleRate) {
+    // PCM 16-bit WAV — IEEE float WAVs are poorly supported and often play as noise/gibberish
+    const numSamples = samples.length;
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);       // PCM fmt chunk size
+    view.setUint16(20, 1, true);        // PCM format
+    view.setUint16(22, 1, true);        // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate
+    view.setUint16(32, 2, true);        // block align
+    view.setUint16(34, 16, true);       // bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+
+    let offset = 44;
+    for (let i = 0; i < numSamples; i++) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        offset += 2;
+    }
+    return buffer;
+}
+
+function playAudio(text) {
+    if (ttsEngine === TTS_ENGINE_KOKORO) {
+        playKokoroAudio(text);
+        return;
+    }
+    playBrowserAudio(text);
 }
 
 async function processPageText(page) {
@@ -594,64 +804,19 @@ async function processPageText(page) {
 }
 
 
-function setupAudioEventListeners() {
-    if (!audioElement) return;
-
-    const errorHandler = (error) => {
-        console.error('Audio playback error:', error);
-        showMessage(`Audio playback error: ${error.message}`, 'red');
-        isSpeaking = false;
-        isPaused = false;
-        updateAudioControls();
-    };
-
-    audioElement.addEventListener('ended', () => {
-        isSpeaking = false;
-        isPaused = false;
-        updateAudioControls();
-        URL.revokeObjectURL(audioElement.src);
-    });
-
-
-    audioElement.addEventListener('playing', () => {
-        isSpeaking = true;
-        isPaused = false;
-        updateAudioControls();
-        hideAudioLoading();
-    });
-
-    audioElement.addEventListener('pause', () => {
-        if (!audioElement.ended) {
+function pauseAudio() {
+    if (ttsEngine === TTS_ENGINE_KOKORO) {
+        if (kokoroAudio && isSpeaking && !isPaused) {
+            kokoroAudio.pause();
             isSpeaking = false;
             isPaused = true;
             updateAudioControls();
         }
-    });
+        return;
+    }
 
-    audioElement.addEventListener('error', (e) => {
-        hideAudioLoading();
-        errorHandler(e);
-    });
-    audioElement.addEventListener('stalled', () => {
-        hideAudioLoading();
-        errorHandler(new Error('Audio playback stalled'));
-    });
-    audioElement.addEventListener('abort', () => {
-        hideAudioLoading();
-        errorHandler(new Error('Audio playback aborted'));
-    });
-
-    audioElement.addEventListener('waiting', () => {
-        showMessage('Buffering audio...', 'blue');
-    });
-
-    audioElement.addEventListener('canplaythrough', () => {
-        hideAudioLoading();
-    });
-}
-function pauseAudio() {
-    if (audioElement && isSpeaking && !isPaused) {
-        audioElement.pause();
+    if (ttsSupported() && isSpeaking && !isPaused) {
+        window.speechSynthesis.pause();
         isSpeaking = false;
         isPaused = true;
         updateAudioControls();
@@ -659,13 +824,15 @@ function pauseAudio() {
 }
 
 function stopAudio() {
-    if (audioElement) {
-        audioElement.pause();
-        audioElement.currentTime = 0;
-        isSpeaking = false;
-        isPaused = false;
-        updateAudioControls();
+    stopKokoroAudio();
+    if (ttsSupported()) {
+        window.speechSynthesis.cancel();
+        activeUtterances = [];
     }
+    isSpeaking = false;
+    isPaused = false;
+    hideAudioLoading();
+    updateAudioControls();
 }
 
 function updateAudioControls() {
@@ -713,33 +880,11 @@ document.addEventListener("DOMContentLoaded", async function() {
         const playButton = document.getElementById('play-audio');
         const pauseButton = document.getElementById('pause-audio');
         const stopButton = document.getElementById('stop-audio');
+        createEnginePicker();
         createSpeedSlider();
 
         if (playButton) {
-            playButton.addEventListener('click', async () => {
-                if (!audioContext) {
-                    showAudioLoading();
-                    try {
-                        await Promise.race([
-                            (async () => {
-                                await initializeAudioContext();
-                                await initializeSynthesizer();
-                            })(),
-                            timeoutPromise(AUDIO_INIT_TIMEOUT_MS, 'Initialization timed out')
-                        ]);
-                    } catch (error) {
-                        console.error('Failed to initialize audio:', error);
-                        const msg = error && error.message === 'Initialization timed out'
-                            ? 'Failed to initialize audio. Please try again.'
-                            : 'Audio features are unavailable right now. Please refresh the page or try again later.';
-                        showMessage(msg, 'red', 2000);
-                        hideAudioLoading();
-                        return;
-                    } finally {
-                        hideAudioLoading();
-                    }
-                }
-
+            playButton.addEventListener('click', () => {
                 if (currentPageText) {
                     playAudio(currentPageText);
                 }
@@ -888,27 +1033,25 @@ document.addEventListener("DOMContentLoaded", async function() {
     async function init() {
         try {
             showLoading();
-            setupTTSButtons(); // Set up buttons first
-            await loadPDF('Abidogun.pdf'); // Load PDF immediately
-            
-            // Add click handler for audio initialization (only one listener — registered here after init)
-            const initAudioHandler = async () => {
-                showAudioLoading();
-                try {
-                    await initializeAudioContext();
-                    await initializeSynthesizer();
-                    document.removeEventListener('click', initAudioHandler);
-                } catch (error) {
-                    console.error('Error initializing audio:', error);
-                    document.removeEventListener('click', initAudioHandler);
-                    // showMessage already called inside initializeSynthesizer
-                } finally {
-                    hideAudioLoading();
-                }
-            };
 
-            document.addEventListener('click', initAudioHandler);
-            
+            // Leftover credentials from the retired cloud TTS
+            localStorage.removeItem('gcp_access_token');
+            localStorage.removeItem('gcp_token_expiry');
+
+            if (anyTtsAvailable()) {
+                if (ttsSupported()) {
+                    // Voice list loads asynchronously in some browsers
+                    selectedVoice = pickVoice();
+                    window.speechSynthesis.onvoiceschanged = () => {
+                        selectedVoice = pickVoice();
+                    };
+                }
+                setupTTSButtons();
+            } else {
+                disableTTSButtons();
+            }
+
+            await loadPDF('Abidogun.pdf');
             hideLoading();
         } catch (error) {
             console.error('Error initializing application:', error);
@@ -922,7 +1065,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 });
 
 
-// Expose TTS playback/control only. Do not expose initializeSynthesizer — it mutates shared state.
+// Expose TTS playback/control for chapter-sidebar and page navigation
 window.TTS = {
     playAudio,
     pauseAudio,

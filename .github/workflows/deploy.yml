@@ -30,13 +30,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build site (if build script exists)
-        run: |
-          if npm run | grep -q "build"; then
-            npm run build
-          else
-            echo "No build script defined, using existing dist/ contents"
-          fi
+      - name: Download self-hosted Kokoro model
+        run: npm run download:kokoro
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -12,6 +12,23 @@ custom:
   client:
     bucketName: ${self:service}-${self:provider.stage}
     distributionFolder: dist
+    # HTML/JS stay fresh; model weights are versioned by path and can be cached hard
+    objectHeaders:
+      'models/':
+        - name: Cache-Control
+          value: public, max-age=31536000, immutable
+      '*.html':
+        - name: Cache-Control
+          value: max-age=0, no-cache, no-store, must-revalidate
+      '*.js':
+        - name: Cache-Control
+          value: max-age=0, no-cache, no-store, must-revalidate
+      '*.css':
+        - name: Cache-Control
+          value: max-age=0, no-cache, no-store, must-revalidate
+      '*.pdf':
+        - name: Cache-Control
+          value: max-age=0, no-cache, no-store, must-revalidate
     uploadOptions:
       CacheControl: max-age=0, no-cache, no-store, must-revalidate
       Include:
