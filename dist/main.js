@@ -876,6 +876,21 @@ document.addEventListener("DOMContentLoaded", async function() {
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
+    function syncViewportHeight() {
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        document.documentElement.style.setProperty(
+            '--app-height',
+            `${Math.round(viewportHeight)}px`
+        );
+    }
+
+    function setupViewportHeightSync() {
+        syncViewportHeight();
+        window.addEventListener('resize', syncViewportHeight);
+        window.addEventListener('orientationchange', syncViewportHeight);
+        window.visualViewport?.addEventListener('resize', syncViewportHeight);
+        window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+    }
 
     function syncControlsHeight() {
         if (!controlsWrapper) return;
@@ -1081,6 +1096,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     }
 
     // Start the application
+    setupViewportHeightSync();
     init();
 });
 
