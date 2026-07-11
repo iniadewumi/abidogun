@@ -9,6 +9,10 @@ html, body {
     overscroll-behavior: none;
 }
 
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
 /* PDF Viewer Layout */
 #pdf-viewer {
     position: relative;
@@ -19,23 +23,24 @@ html, body {
 }
 
 #pdf-container {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 90px;
+    flex: 1;
+    min-height: 0;
     display: flex;
     justify-content: center;
     align-items: center;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
     touch-action: pan-x pan-y pinch-zoom;
+    padding: 16px;
 }
 
 #pdf-container canvas {
+    /* Override the fixed inline width/height set by main.js so the canvas
+       scales down proportionally instead of being squashed and letterboxed. */
+    width: auto !important;
+    height: auto !important;
     max-width: 100%;
     max-height: 100%;
-    object-fit: contain;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
     background-color: #f0ead6;
 }
@@ -65,12 +70,11 @@ html, body {
     100% { background-position: -200% 0; }
 }
 
-/* Controls */
+/* ============================================================
+   Controls — one design at every screen size.
+   ============================================================ */
 #controls-wrapper {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    flex-shrink: 0;
     background-color: #2c3e50;
     border-top: 1px solid #34495e;
     z-index: 1000;
@@ -79,35 +83,18 @@ html, body {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
-}
-
-#audio-controls {
-    height: 40px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    border-bottom: 1px solid #34495e;
-    padding: 0 5px;
-    overflow: visible;
-}
-
-#page-controls {
-    height: 50px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 20px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
 }
 
 button {
     background: none;
     border: none;
-    font-size: 20px;
     cursor: pointer;
     color: #ecf0f1;
-    padding: 8px 12px;
     transition: background-color 0.3s ease, color 0.3s ease;
-    border-radius: 4px;
+    border-radius: 8px;
     touch-action: manipulation;
 }
 
@@ -120,32 +107,259 @@ button:active {
 }
 
 button:disabled {
-    color: #95a5a6;
+    color: rgba(255, 255, 255, 0.25);
     cursor: not-allowed;
+    background: transparent;
+}
+
+/* --- Audio row: play/pause/stop + voice + speed --- */
+#audio-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 8px 12px;
+}
+
+#audio-controls > button {
+    margin: 0 2px;
+    padding: 0;
+    width: 38px;
+    height: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    background: transparent;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+#audio-controls > button#play-audio {
+    color: #d6b978;
+}
+
+/* Voice + speed styled as a single segmented unit with an inner divider.
+   Both can shrink so the row fits narrow screens instead of clipping. */
+.engine-control {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    position: relative;
+    z-index: 20;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin: 0 0 0 12px;
+}
+
+.engine-label,
+.speed-control label {
+    margin-right: 6px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.engine-dropdown {
+    position: relative;
+    flex: 0 1 auto;
+    width: auto;
+    max-width: 130px;
+    min-width: 0;
+}
+
+.engine-trigger,
+.speed-control {
+    height: 36px;
+    min-height: 36px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.engine-trigger {
+    display: inline-flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    gap: 6px;
+    padding: 0 10px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+    line-height: 1;
+    border-radius: 8px 0 0 8px;
+    border-right: none;
+    cursor: pointer;
+}
+
+.engine-trigger:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.engine-trigger:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.engine-trigger-text {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.engine-trigger-caret {
+    font-size: 9px;
+    opacity: 0.75;
+    transition: transform 0.15s ease;
+}
+
+.engine-dropdown.open .engine-trigger-caret {
+    transform: rotate(180deg);
+}
+
+.engine-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    min-width: 100%;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    background-color: #2c3e50;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+    z-index: 30;
+}
+
+.engine-menu[hidden] {
+    display: none;
+}
+
+.engine-option {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    margin: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #ecf0f1;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.engine-option:hover {
+    background-color: #34495e;
+}
+
+.engine-option.selected {
+    background-color: #3498db;
+    color: #fff;
+}
+
+.engine-option.selected:hover {
+    background-color: #2980b9;
+}
+
+/* --- Speed control (right segment of the voice+speed unit) --- */
+.speed-control {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    flex: 0 1 auto;
+    min-width: 0;
+    width: auto;
+    max-width: 150px;
+    gap: 6px;
+    padding: 0 10px;
+    margin: 0;
+    border-radius: 0 8px 8px 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#speed-slider {
+    flex: 1;
+    width: 80px;
+    min-width: 50px;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.22);
+    border-radius: 2px;
+    outline: none;
+}
+
+#speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d6b978;
+    border: none;
+}
+
+#speed-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d6b978;
+    border: none;
+}
+
+#speed-value {
+    min-width: 28px;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* --- Page navigation row --- */
+#page-controls {
+    height: 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#page-controls button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 16px;
 }
 
 #page-info {
     display: flex;
     align-items: center;
-    font-size: 16px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
 }
 
 #current-page {
-    width: 50px;
+    width: 40px;
+    min-height: 36px;
+    margin: 0 5px 0 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
     text-align: center;
-    border: 1px solid #34495e;
-    border-radius: 4px;
-    padding: 5px;
-    font-size: 16px;
-    background-color: #2c3e50;
-    color: #ecf0f1;
-    margin: 0 10px;
 }
 
 /* Messages and Loading */
 #message-box {
     position: fixed;
-    bottom: 100px; /* Ensure it appears above the controls */
+    bottom: calc(var(--controls-height, 90px) + 10px);
     left: 50%;
     transform: translateX(-50%);
     padding: 10px 20px;
@@ -209,8 +423,8 @@ button:disabled {
 /* Chapter Sidebar */
 .sidebar-toggle {
     position: fixed;
-    top: 10px;
-    left: 10px;
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    left: calc(10px + env(safe-area-inset-left, 0px));
     width: 40px;
     height: 40px;
     background-color: rgba(0, 0, 0, 0.7);
@@ -233,8 +447,9 @@ button:disabled {
 .chapter-sidebar {
     position: fixed;
     top: 0;
-    left: -280px;
+    left: -100%;
     width: 280px;
+    max-width: 85%;
     height: 100%;
     background-color: #1e293b;
     color: #ecf0f1;
@@ -274,6 +489,7 @@ button:disabled {
     height: calc(100% - 50px);
     overflow-y: auto;
     padding: 10px 0;
+    -webkit-overflow-scrolling: touch;
 }
 
 .no-chapters {
@@ -296,8 +512,10 @@ button:disabled {
     padding: 12px 20px;
     cursor: pointer;
     font-size: 14px;
+    min-height: 44px;
     color: #ecf0f1;
     border-bottom: 1px solid #34495e;
+    border-radius: 0;
 }
 
 .chapter-item:hover {
@@ -338,248 +556,141 @@ body.sidebar-open {
     overflow: hidden;
 }
 
-/* Voice engine picker (custom dropdown — avoids native OS select chrome) */
-.engine-control {
-    display: flex;
-    align-items: center;
-    margin-left: 10px;
-    white-space: nowrap;
-    position: relative;
-    z-index: 20;
-}
-
-.engine-label {
-    margin-right: 6px;
-    font-size: 12px;
-    color: #ecf0f1;
-}
-
-.engine-dropdown {
-    position: relative;
-}
-
-.engine-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 118px;
-    height: 28px;
-    padding: 0 10px;
-    background-color: #34495e;
-    color: #ecf0f1;
-    border: 1px solid #4a6278;
-    border-radius: 4px;
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.engine-trigger:hover {
-    background-color: #3d566e;
-}
-
-.engine-trigger:focus {
-    outline: none;
-    border-color: #3498db;
-}
-
-.engine-trigger-text {
-    flex: 1;
-    text-align: left;
-}
-
-.engine-trigger-caret {
-    font-size: 9px;
-    opacity: 0.75;
-    transition: transform 0.15s ease;
-}
-
-.engine-dropdown.open .engine-trigger-caret {
-    transform: rotate(180deg);
-}
-
-.engine-menu {
-    position: absolute;
-    left: 0;
-    bottom: calc(100% + 6px);
-    min-width: 100%;
-    margin: 0;
-    padding: 4px;
-    list-style: none;
-    background-color: #2c3e50;
-    border: 1px solid #4a6278;
-    border-radius: 6px;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
-    z-index: 30;
-}
-
-.engine-menu[hidden] {
-    display: none;
-}
-
-.engine-option {
-    display: block;
-    width: 100%;
-    padding: 8px 10px;
-    margin: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: #ecf0f1;
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-}
-
-.engine-option:hover {
-    background-color: #34495e;
-}
-
-.engine-option.selected {
-    background-color: #3498db;
-    color: #fff;
-}
-
-.engine-option.selected:hover {
-    background-color: #2980b9;
-}
-
-/* Speed Control */
-.speed-control {
-    display: flex;
-    align-items: center;
-    margin-left: 10px;
-    white-space: nowrap;
-}
-
-.speed-control label {
-    margin-right: 5px;
-    font-size: 12px;
-    color: #ecf0f1;
-}
-
-#speed-slider {
-    width: 80px;
-    margin: 0 5px;
-}
-
-#speed-value {
-    font-size: 12px;
-    color: #ecf0f1;
-    min-width: 30px;
-    text-align: left;
-}
-
-/* Responsive styles */
-@media (max-width: 767px) {
-    /* Sidebar mobile optimization */
-    .sidebar-toggle {
-        top: 10px;
-        width: 36px;
-        height: 36px;
-        font-size: 16px;
-    }
-    
-    .chapter-sidebar {
-        width: 85%;
-        max-width: 320px;
-        left: -100%; /* Fully off-screen when closed so transition animates correctly */
-    }
-
-    .chapter-sidebar.open {
-        left: 0;
-    }
-
-    /* Audio controls mobile optimization */
-    #controls-wrapper {
-        height: auto; /* Allow height to adapt to content */
-    }
-    
+/* Tablets and up: slightly larger controls for comfortable touch targets. */
+@media (min-width: 768px) {
     #audio-controls {
-        height: auto;
-        min-height: 50px;
-        flex-wrap: wrap;
-        padding: 5px;
-        justify-content: space-evenly;
+        padding: 10px 16px;
     }
-    
-    #audio-controls button {
-        padding: 10px;
-        margin: 3px;
-        /* Make larger touch targets */
-        min-width: 44px;
+
+    #audio-controls > button {
+        width: 48px;
+        height: 44px;
         min-height: 44px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        font-size: 19px;
+        margin: 0 4px;
     }
-    
-    .engine-control,
+
+    .engine-control {
+        margin-left: 16px;
+    }
+
+    .engine-trigger,
     .speed-control {
-        width: 100%;
-        margin: 5px 0;
-        justify-content: center;
-        padding: 5px 0;
+        height: 44px;
+        min-height: 44px;
     }
 
     .engine-dropdown {
-        flex: 1;
+        max-width: 160px;
     }
 
     .engine-trigger {
-        width: 100%;
-        min-height: 36px;
-        height: 36px;
+        font-size: 14px;
+        padding: 0 12px;
     }
 
-    .engine-menu {
-        min-width: 100%;
+    .engine-option {
+        font-size: 14px;
+        padding: 10px 12px;
     }
-    
+
+    .engine-label,
+    .speed-control label {
+        font-size: 14px;
+    }
+
+    .speed-control {
+        max-width: 190px;
+        padding: 0 12px;
+    }
+
     #speed-slider {
-        width: 120px; /* Wider slider for better control */
+        width: 100px;
+        height: 4px;
     }
-    
-    /* Adjust PDF container to account for potentially taller controls */
-    #pdf-container {
-        bottom: calc(90px + 5px); /* Base height plus potential extra height */
-    }
-    
-    /* Page navigation buttons */
-    #page-controls button {
-        min-width: 44px;
-        min-height: 44px;
-    }
-}
 
-/* Special adjustments for very small screens */
-@media (max-width: 320px) {
-    #current-page {
-        width: 40px;
-        font-size: 14px;
-        padding: 4px;
+    #speed-slider::-webkit-slider-thumb {
+        width: 18px;
+        height: 18px;
     }
-    
-    #page-info {
-        font-size: 14px;
+
+    #speed-slider::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
     }
-    
+
+    #speed-value {
+        font-size: 13px;
+        min-width: 34px;
+    }
+
     #page-controls {
-        padding: 0 10px;
+        height: 56px;
+    }
+
+    #page-controls button {
+        font-size: 20px;
+        min-width: 48px;
+        min-height: 48px;
+    }
+
+    #page-info {
+        font-size: 15px;
+    }
+
+    #current-page {
+        font-size: 16px;
+        width: 46px;
     }
 }
 
-/* Enhance touch targets for iOS devices */
-@supports (-webkit-touch-callout: none) {
-    button, 
-    .chapter-item,
-    #current-page {
-        /* Better touch targets for iOS */
+/* Very narrow phones: hide the text labels and let the audio row wrap. */
+@media (max-width: 420px) {
+    .engine-label,
+    .speed-control label {
+        display: none;
+    }
+
+    #pdf-container {
         padding: 12px;
     }
-    
-    /* Fix any iOS-specific scrolling issues */
-    .chapters-container {
-        -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 360px) {
+    #audio-controls {
+        flex-wrap: wrap;
+        row-gap: 6px;
+        column-gap: 6px;
+        padding: 6px 8px;
+    }
+
+    #audio-controls > button {
+        margin: 0 6px;
+    }
+
+    .engine-control {
+        margin-left: 0;
+    }
+
+    /* The row can wrap here, splitting the voice+speed unit onto separate
+       lines — style each segment as a standalone pill so wrapping looks
+       intentional rather than broken. */
+    .engine-trigger {
+        border-radius: 8px;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .speed-control {
+        border-radius: 8px;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .engine-dropdown {
+        max-width: 120px;
+    }
+
+    .speed-control {
+        max-width: 150px;
+        flex: 1 1 auto;
     }
 }

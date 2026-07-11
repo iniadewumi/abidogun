@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "playwright": "^1.61.1",
     "serverless-finch": "^4.0.4",
     "serverless-s3-sync": "^3.3.0"
   }

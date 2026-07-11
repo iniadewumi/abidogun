@@ -868,6 +868,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     let currentPageText = '';
     
     const pdfContainer = document.getElementById('pdf-container');
+    const controlsWrapper = document.getElementById('controls-wrapper');
     const prevPageBtn = document.getElementById('prev-page');
     const nextPageBtn = document.getElementById('next-page');
     const currentPageInput = document.getElementById('current-page');
@@ -875,6 +876,23 @@ document.addEventListener("DOMContentLoaded", async function() {
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
+
+    function syncControlsHeight() {
+        if (!controlsWrapper) return;
+        document.documentElement.style.setProperty(
+            '--controls-height',
+            `${controlsWrapper.offsetHeight}px`
+        );
+    }
+
+    function setupControlsHeightSync() {
+        syncControlsHeight();
+        window.addEventListener('resize', syncControlsHeight);
+        if (typeof ResizeObserver !== 'undefined' && controlsWrapper) {
+            const observer = new ResizeObserver(syncControlsHeight);
+            observer.observe(controlsWrapper);
+        }
+    }
 
     function setupTTSButtons() {
         const playButton = document.getElementById('play-audio');
@@ -1047,8 +1065,10 @@ document.addEventListener("DOMContentLoaded", async function() {
                     };
                 }
                 setupTTSButtons();
+                setupControlsHeightSync();
             } else {
                 disableTTSButtons();
+                setupControlsHeightSync();
             }
 
             await loadPDF('Abidogun.pdf');
