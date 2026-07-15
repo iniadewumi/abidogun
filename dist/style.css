@@ -119,6 +119,8 @@ button:disabled {
     justify-content: center;
     align-items: center;
     padding: 8px 12px;
+    min-width: 0;
+    width: 100%;
 }
 
 #audio-controls > button {
@@ -130,7 +132,7 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: none;
+    flex: 0 0 auto;
     background: transparent;
     font-size: 15px;
     color: rgba(255, 255, 255, 0.85);
@@ -140,17 +142,27 @@ button:disabled {
     color: #d6b978;
 }
 
-/* Voice + speed styled as a single segmented unit with an inner divider.
-   Both can shrink so the row fits narrow screens instead of clipping. */
+/* Voice + speed share one shrinkable row so long labels never push speed off-screen. */
+.audio-settings {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 8px;
+    overflow: hidden;
+}
+
+/* Voice + speed styled as a single segmented unit with an inner divider. */
 .engine-control {
     display: flex;
     align-items: center;
     white-space: nowrap;
     position: relative;
     z-index: 20;
-    flex: 0 1 auto;
+    flex: 1 1 58%;
     min-width: 0;
-    margin: 0 0 0 12px;
+    margin: 0;
+    overflow: hidden;
 }
 
 .engine-label,
@@ -158,14 +170,15 @@ button:disabled {
     margin-right: 6px;
     font-size: 12px;
     color: rgba(255, 255, 255, 0.6);
+    flex-shrink: 0;
 }
 
 .engine-dropdown {
     position: relative;
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     width: auto;
-    max-width: 130px;
     min-width: 0;
+    max-width: 100%;
 }
 
 .engine-trigger,
@@ -269,21 +282,22 @@ button:disabled {
     display: flex;
     align-items: center;
     white-space: nowrap;
-    flex: 0 1 auto;
+    flex: 1 1 42%;
     min-width: 0;
     width: auto;
-    max-width: 150px;
+    max-width: none;
     gap: 6px;
-    padding: 0 10px;
+    padding: 0 8px;
     margin: 0;
     border-radius: 0 8px 8px 0;
     border-left: 1px solid rgba(255, 255, 255, 0.12);
+    overflow: hidden;
 }
 
 #speed-slider {
-    flex: 1;
-    width: 80px;
-    min-width: 50px;
+    flex: 1 1 auto;
+    width: 0;
+    min-width: 0;
     margin: 0;
     -webkit-appearance: none;
     appearance: none;
@@ -312,7 +326,8 @@ button:disabled {
 }
 
 #speed-value {
-    min-width: 28px;
+    flex: 0 0 auto;
+    min-width: 26px;
     color: rgba(255, 255, 255, 0.55);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
@@ -571,7 +586,7 @@ body.sidebar-open {
         margin: 0 4px;
     }
 
-    .engine-control {
+    .audio-settings {
         margin-left: 16px;
     }
 
@@ -579,10 +594,6 @@ body.sidebar-open {
     .speed-control {
         height: 44px;
         min-height: 44px;
-    }
-
-    .engine-dropdown {
-        max-width: 160px;
     }
 
     .engine-trigger {
@@ -601,12 +612,10 @@ body.sidebar-open {
     }
 
     .speed-control {
-        max-width: 190px;
         padding: 0 12px;
     }
 
     #speed-slider {
-        width: 100px;
         height: 4px;
     }
 
@@ -645,8 +654,8 @@ body.sidebar-open {
     }
 }
 
-/* Very narrow phones: hide the text labels and let the audio row wrap. */
-@media (max-width: 420px) {
+/* Phones: hide Voice/Speed labels to free horizontal space. */
+@media (max-width: 767px) {
     .engine-label,
     .speed-control label {
         display: none;
@@ -669,7 +678,8 @@ body.sidebar-open {
         margin: 0 6px;
     }
 
-    .engine-control {
+    .audio-settings {
+        flex: 1 1 100%;
         margin-left: 0;
     }
 
@@ -684,14 +694,6 @@ body.sidebar-open {
     .speed-control {
         border-radius: 8px;
         border-left: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    .engine-dropdown {
-        max-width: 120px;
-    }
-
-    .speed-control {
-        max-width: 150px;
         flex: 1 1 auto;
     }
 }

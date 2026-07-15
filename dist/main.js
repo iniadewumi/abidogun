@@ -158,6 +158,20 @@ let kokoroObjectUrl = null;
 let kokoroGenerationId = 0;
 let kokoroContinuePlayback = null;
 
+function getAudioSettingsGroup() {
+    const audioControls = document.getElementById('audio-controls');
+    if (!audioControls) return null;
+
+    let group = document.getElementById('audio-settings');
+    if (!group) {
+        group = document.createElement('div');
+        group.id = 'audio-settings';
+        group.className = 'audio-settings';
+        audioControls.appendChild(group);
+    }
+    return group;
+}
+
 function createEnginePicker() {
     const audioControls = document.getElementById('audio-controls');
     if (!audioControls || document.getElementById('engine-control')) return;
@@ -266,7 +280,7 @@ function createEnginePicker() {
     dropdown.appendChild(menu);
     engineControl.appendChild(label);
     engineControl.appendChild(dropdown);
-    audioControls.appendChild(engineControl);
+    getAudioSettingsGroup()?.appendChild(engineControl);
 }
 
 function createSpeedSlider() {
@@ -304,7 +318,7 @@ function createSpeedSlider() {
     speedControl.appendChild(label);
     speedControl.appendChild(slider);
     speedControl.appendChild(speedValue);
-    audioControls.appendChild(speedControl);
+    getAudioSettingsGroup()?.appendChild(speedControl);
 
     const savedSpeed = localStorage.getItem('narrationSpeed');
     if (savedSpeed) {
